@@ -3,6 +3,7 @@ import UIKit
 enum HapticEvent {
     case readableTextConfirmed
     case ocrFailed
+    case modeChanged
 }
 
 enum OCRHapticPulseState {
@@ -34,6 +35,8 @@ final class HapticFeedbackManager: NSObject {
     private let candidateGenerator = UIImpactFeedbackGenerator(style: .heavy)
     private let confirmationGenerator = UIImpactFeedbackGenerator(style: .heavy)
     private let notificationGenerator = UINotificationFeedbackGenerator()
+    /// A sharp tap that feels different from the heavy OCR search pulses.
+    private let modeChangeGenerator = UIImpactFeedbackGenerator(style: .rigid)
 
     init(configuration: OCRHapticConfiguration = .standard) {
         self.configuration = configuration
@@ -86,6 +89,9 @@ final class HapticFeedbackManager: NSObject {
                 self.prepareGenerators()
             case .ocrFailed:
                 self.notificationGenerator.notificationOccurred(.error)
+            case .modeChanged:
+                self.modeChangeGenerator.impactOccurred(intensity: 1.0)
+                self.modeChangeGenerator.prepare()
             }
         }
     }
@@ -126,6 +132,7 @@ final class HapticFeedbackManager: NSObject {
         candidateGenerator.prepare()
         confirmationGenerator.prepare()
         notificationGenerator.prepare()
+        modeChangeGenerator.prepare()
     }
 
     private func emitStrongDoublePulse() {

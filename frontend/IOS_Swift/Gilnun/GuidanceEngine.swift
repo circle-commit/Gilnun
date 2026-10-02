@@ -431,25 +431,11 @@ nonisolated enum GuidanceRules {
     }
 
     private static func format(_ template: String, with context: MessageContext) -> String {
-        let positionKorean: String
-        let positionFromKorean: String
-        switch context.position {
-        case .left:
-            positionKorean = "왼쪽"
-            positionFromKorean = "왼쪽에서"
-        case .center:
-            positionKorean = "정면"
-            positionFromKorean = "정면에서"
-        case .right:
-            positionKorean = "오른쪽"
-            positionFromKorean = "오른쪽에서"
-        }
-
-        return template
+        template
             .replacingOccurrences(of: "{korean_label}", with: context.koreanLabel)
             .replacingOccurrences(of: "{particle}", with: context.particle)
-            .replacingOccurrences(of: "{position_ko}", with: positionKorean)
-            .replacingOccurrences(of: "{position_from_ko}", with: positionFromKorean)
+            .replacingOccurrences(of: "{position_ko}", with: context.position.koreanName)
+            .replacingOccurrences(of: "{position_from_ko}", with: context.position.koreanName + "에서")
             .replacingOccurrences(of: "{front_word}", with: context.frontWord)
     }
 

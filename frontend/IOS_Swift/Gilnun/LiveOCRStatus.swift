@@ -22,4 +22,6 @@ struct LiveGuidanceBox: Identifiable {
     let rect: CGRect
     let riskScore: Int
     let label: String
+    /// "왼쪽", "정면" or "오른쪽".
+    let positionLabel: String
 }

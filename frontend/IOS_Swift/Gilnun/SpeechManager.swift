@@ -9,11 +9,19 @@ final class SpeechManager: NSObject, AVSpeechSynthesizerDelegate {
     private var pendingGuidance: (text: String, urgency: RiskLevel, createdAt: Date)?
     /// Waiting guidance older than this is dropped; the scene has likely changed.
     private let pendingGuidanceLifetime: TimeInterval = 2.0
+    /// Chosen voice per language (identifiers), cleared when the user downloads new voices.
+    private var voiceIdentifiers: [String: String] = [:]
 
     override init() {
         super.init()
         synthesizer.delegate = self
         configureAudioSession()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(availableVoicesChanged),
+            name: AVSpeechSynthesizer.availableVoicesDidChangeNotification,
+            object: nil
+        )
     }
 
     /// Speaks right away, cutting off anything in progress (mode announcements, OCR results).
@@ -91,7 +99,9 @@ final class SpeechManager: NSObject, AVSpeechSynthesizerDelegate {
 
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = 0.48
-        utterance.voice = AVSpeechSynthesisVoice(language: voiceLanguage(for: text))
+        utterance.voice = bestVoice(for: voiceLanguage(for: text))
+        // With VoiceOver on, speak in the voice, speed and pitch the user chose there.
+        utterance.prefersAssistiveTechnologySettings = true
         if let onFinish {
             finishHandlers[ObjectIdentifier(utterance)] = onFinish
         }
@@ -112,6 +122,27 @@ final class SpeechManager: NSObject, AVSpeechSynthesizerDelegate {
         pendingGuidance = nil
         guard Date().timeIntervalSince(pending.createdAt) <= pendingGuidanceLifetime else { return }
         startSpeaking(pending.text, urgency: pending.urgency, onFinish: nil)
+    }
+
+    /// Prefers premium, then enhanced voices downloaded in Settings > Accessibility >
+    /// Spoken Content > Voices; the built-in compact voice sounds noticeably robotic.
+    private func bestVoice(for language: String) -> AVSpeechSynthesisVoice? {
+        if let identifier = voiceIdentifiers[language], let voice = AVSpeechSynthesisVoice(identifier: identifier) {
+            return voice
+        }
+
+        let voice = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == language && $0.quality != .default }
+            .max { $0.quality.rawValue < $1.quality.rawValue }
+            ?? AVSpeechSynthesisVoice(language: language)
+        voiceIdentifiers[language] = voice?.identifier
+        return voice
+    }
+
+    @objc private func availableVoicesChanged() {
+        DispatchQueue.main.async {
+            self.voiceIdentifiers.removeAll()
+        }
     }
 
     private func voiceLanguage(for text: String) -> String {

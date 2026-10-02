@@ -8,6 +8,7 @@
 import AVFoundation
 import Combine
 import CoreImage
+import UIKit
 
 final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     enum ProcessingMode: String {
@@ -23,13 +24,16 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     @Published var latestLiveRiskScore = 0
     @Published var liveBoxes: [LiveGuidanceBox] = []
     @Published var liveImageSize: CGSize = .zero
+    /// True once live frames are actually being analyzed (false while the camera starts).
+    @Published var isLiveAnalysisRunning = false
+    @Published var isCameraDenied = false
 
     /// Every detection is visualized (classic detector-style overlay). Set above 0 to
     /// hide low-risk objects again.
     private static let liveBoxMinRisk = 0
-    /// Only the highest-risk objects are drawn, to keep the preview readable for low-vision
-    /// users and avoid clutter over the live guidance UI.
-    private static let liveBoxMaxCount = 2
+    /// Only the most important object is highlighted, so low-vision users see one clear
+    /// target instead of a cluttered detector overlay.
+    private static let liveBoxMaxCount = 1
 
     private let output = AVCaptureVideoDataOutput()
     private let videoQueue = DispatchQueue(label: "videoQueue")
@@ -52,11 +56,22 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private let liveAnalysisInterval: TimeInterval = 0.2
     /// How long a spoken live message stays on the guidance card.
     private let liveGuideDisplayDuration: TimeInterval = 3.0
+    /// A higher risk stays on screen this long after it was last seen, so the danger
+    /// edge and card don't flicker when a score hovers around a threshold.
+    private let riskDisplayHold: TimeInterval = 1.5
+    private var displayedRiskScore = 0
+    private var displayedRiskTime: TimeInterval = 0
 
     override init() {
         super.init()
         checkPermissions()
         setupSession()
+    }
+
+    /// A mode change the user asked for (button, double tap or Magic Tap): confirm it with a haptic.
+    func switchMode(to mode: ProcessingMode) {
+        hapticManager.play(.modeChanged)
+        setMode(mode)
     }
 
     func setMode(_ mode: ProcessingMode) {
@@ -66,20 +81,20 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         videoQueue.async {
             self.sceneAnalyzer.reset()
             self.lastLiveGuideTime = ProcessInfo.processInfo.systemUptime
+            self.displayedRiskScore = 0
         }
 
         let message: String
-        let shouldAnnounceMode: Bool
         switch mode {
         case .liveAnalyzing:
+            isLiveAnalysisRunning = false
             latestDetectedText = nil
             liveOCRStatus = .searching
             latestLiveDirection = "center"
             latestLiveRiskScore = 0
             liveBoxes = []
             hapticManager.stopRepeatingPulses()
-            message = "실시간 보행 안내를 시작합니다."
-            shouldAnnounceMode = true
+            message = "실시간 보행 안내를 시작합니다." + modeSwitchHint(to: "문자 읽기")
         case .textDescription:
             latestDetectedText = nil
             liveOCRStatus = .searching
@@ -87,11 +102,22 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             latestLiveRiskScore = 0
             liveBoxes = []
             hapticManager.updateOCRPulseState(.searching)
-            message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요."
-            shouldAnnounceMode = false
+            message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요." + modeSwitchHint(to: "실시간 안내")
         }
 
-        updateResponse(voiceGuide: message, detectedText: nil, shouldSpeak: shouldAnnounceMode)
+        // Always announce the new mode: users who can't see the screen need to hear which one is on.
+        updateResponse(voiceGuide: message, detectedText: nil, shouldSpeak: true)
+    }
+
+    /// Explains the switch gesture in the first few mode announcements, until it has likely been learned.
+    private func modeSwitchHint(to target: String) -> String {
+        let key = "modeSwitchHintCount"
+        let count = UserDefaults.standard.integer(forKey: key)
+        guard count < 3 else { return "" }
+
+        UserDefaults.standard.set(count + 1, forKey: key)
+        let gesture = UIAccessibility.isVoiceOverRunning ? "두 손가락으로 두 번 탭하면" : "화면을 두 번 누르면"
+        return " \(gesture) \(target)로 바뀝니다."
     }
 
     private func checkPermissions() {
@@ -99,8 +125,12 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         case .authorized:
             return
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { _ in }
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                guard !granted else { return }
+                DispatchQueue.main.async { self.isCameraDenied = true }
+            }
         default:
+            isCameraDenied = true
             liveOCRStatus = .unavailable
             updateResponse(voiceGuide: "이 앱을 사용하려면 카메라 권한이 필요합니다.", detectedText: nil, shouldSpeak: false)
         }
@@ -190,17 +220,26 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let shouldClearGuide = !hasNewGuide && now - lastLiveGuideTime > liveGuideDisplayDuration
         let boxes = makeLiveBoxes(from: result.detections, imageSize: frameSize)
         let primaryDetection = result.detections.first
+        let riskScore = primaryDetection?.riskScore ?? 0
+        if riskScore >= displayedRiskScore || now - displayedRiskTime > riskDisplayHold {
+            displayedRiskScore = riskScore
+            displayedRiskTime = now
+        }
+        let displayedRisk = displayedRiskScore
 
         DispatchQueue.main.async {
             guard self.currentMode == .liveAnalyzing else { return }
 
+            if !self.isLiveAnalysisRunning {
+                self.isLiveAnalysisRunning = true
+            }
             if hasNewGuide {
                 self.latestGuide = result.voiceGuide
             } else if shouldClearGuide && !self.latestGuide.isEmpty {
                 self.latestGuide = ""
             }
             self.latestLiveDirection = primaryDetection?.position.rawValue ?? "center"
-            self.latestLiveRiskScore = primaryDetection?.riskScore ?? 0
+            self.latestLiveRiskScore = displayedRisk
             self.liveImageSize = frameSize
             self.liveBoxes = boxes
         }
@@ -227,7 +266,8 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                 LiveGuidanceBox(
                     rect: normalizedRect(for: detection.bbox, imageSize: imageSize),
                     riskScore: detection.riskScore,
-                    label: detection.koreanLabel
+                    label: detection.koreanLabel,
+                    positionLabel: detection.position.koreanName
                 )
             }
     }
