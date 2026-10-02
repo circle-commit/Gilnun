@@ -127,7 +127,7 @@ iOS 로직이 백엔드와 같은 결과를 내는지, Core ML 모델이 PyTorch
 frontend/IOS_Swift/Tests/run_tests.sh
 ```
 
-`backend/services/guidance_message_service.py` 등 안내 로직을 바꿀 때는 Swift 코드도 함께 고치고 이 테스트를 실행하세요. 모델을 다시 학습했다면 `python frontend/IOS_Swift/Tests/make_detector_golden.py`로 기준 탐지 결과도 갱신합니다.
+이 테스트와 iOS 시뮬레이터 빌드는 PR마다 GitHub Actions(`.github/workflows/ios.yml`)에서도 자동으로 실행됩니다. `backend/services/guidance_message_service.py` 등 안내 로직을 바꿀 때는 Swift 코드도 함께 고치고 이 테스트를 실행하세요. 모델을 다시 학습했다면 `python frontend/IOS_Swift/Tests/make_detector_golden.py`로 기준 탐지 결과도 갱신합니다.
 
 ### Android (`frontend/Android`)
 iOS `Glass` 앱의 네이티브 Android 버전. CameraX로 카메라 프레임을 스트리밍하고, ML Kit 한국어 텍스트 인식으로 OCR 대상의 안정성을 로컬에서 판단한 뒤 백엔드 `/analyze`를 호출합니다. Android Studio에서 `frontend/Android`를 엽니다.
