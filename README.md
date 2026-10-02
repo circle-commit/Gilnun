@@ -113,6 +113,7 @@ SwiftUI 기반 `Glass` 앱. 서버 없이 기기에서 동작합니다. Xcode에
 - **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLOv8n, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
 - **문자 읽기**: `OCRFrameAnalyzer`가 Apple Vision으로 한국어·영어 문자를 인식하고, 화면이 안정되면 인식한 문장을 읽어 줍니다.
 - 그 밖에 중복 음성 억제, 음성 출력(`SpeechManager` — 더 위급한 안내만 말을 끊고 끼어듦), 햅틱 피드백(`HapticFeedbackManager`)을 포함합니다.
+- 무음 모드에서도 안내 음성이 나오고(다른 앱의 음악은 안내하는 동안만 작아지고, 팟캐스트는 잠시 멈춤), 앱을 쓰는 동안에는 화면이 자동으로 잠기지 않습니다.
 
 학습한 모델을 다시 변환하려면 macOS에서 다음을 실행합니다(`ultralytics`, `coremltools` 필요).
 

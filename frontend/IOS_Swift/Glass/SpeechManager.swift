@@ -13,6 +13,7 @@ final class SpeechManager: NSObject, AVSpeechSynthesizerDelegate {
     override init() {
         super.init()
         synthesizer.delegate = self
+        configureAudioSession()
     }
 
     /// Speaks right away, cutting off anything in progress (mode announcements, OCR results).
@@ -53,17 +54,40 @@ final class SpeechManager: NSObject, AVSpeechSynthesizerDelegate {
         DispatchQueue.main.async {
             self.utteranceEnded(utterance)
             self.speakPendingGuidance()
+            self.deactivateAudioSessionIfIdle()
         }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         DispatchQueue.main.async {
             self.utteranceEnded(utterance)
+            self.deactivateAudioSessionIfIdle()
         }
+    }
+
+    /// Behaves like a navigation app: speaks even when the ring/silent switch is set to
+    /// silent, lowers music while speaking and pauses podcasts or audiobooks.
+    private func configureAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playback,
+                mode: .voicePrompt,
+                options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
+            )
+        } catch {
+            print("Audio session setup failed: \(error)")
+        }
+    }
+
+    /// Lets other apps' audio return to normal volume between prompts.
+    private func deactivateAudioSessionIfIdle() {
+        guard !synthesizer.isSpeaking else { return }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func startSpeaking(_ text: String, urgency: RiskLevel, onFinish: (() -> Void)?) {
         synthesizer.stopSpeaking(at: .immediate)
+        try? AVAudioSession.sharedInstance().setActive(true)
 
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = 0.48

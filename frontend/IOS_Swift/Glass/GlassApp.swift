@@ -6,12 +6,19 @@
 //
 
 import SwiftUI
+import UIKit
 
 @main
 struct GlassApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            // Auto-lock would stop the camera mid-walk, so keep the screen on while the app is in use.
+            UIApplication.shared.isIdleTimerDisabled = phase == .active
         }
     }
 }
