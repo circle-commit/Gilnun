@@ -1,0 +1,51 @@
+name: iOS
+
+on:
+  pull_request:
+    paths:
+      - "frontend/IOS_Swift/**"
+      - "backend/services/**"
+      - "vision/tracker_logic.py"
+      - "test_images/**"
+      - ".github/workflows/ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/IOS_Swift/**"
+      - "backend/services/**"
+      - "vision/tracker_logic.py"
+      - "test_images/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests and simulator build
+    # Apple silicon with Xcode 26; the Swift code needs Swift 6.2 or newer.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      # Swift guidance logic vs. the Python backend, Core ML model vs. PyTorch reference.
+      - name: Run logic and model tests
+        run: frontend/IOS_Swift/Tests/run_tests.sh
+
+      # Also compiles the app-only code (camera, speech, UI) that the tests do not cover.
+      - name: Build app for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project frontend/IOS_Swift/Gilnun.xcodeproj \
+            -scheme Gilnun \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO

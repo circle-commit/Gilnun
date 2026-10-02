@@ -8,19 +8,27 @@ struct OCRFrameAnalysis {
     let blurScore: Double
     let movementScore: Double
     let timestamp: Date
+    /// Lines confident enough to read aloud, in reading order.
+    let readableLines: [String]
 
     var hasText: Bool {
         textRegion != nil
     }
+
+    var readableText: String {
+        readableLines.joined(separator: " ")
+    }
 }
 
 final class OCRFrameAnalyzer {
-    private let queue = DispatchQueue(label: "glass.ocr.frame-analyzer", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "gilnun.ocr.frame-analyzer", qos: .userInitiated)
     private let request = VNRecognizeTextRequest()
     private var previousLumaSample: [Double]?
     private var isAnalyzing = false
     private var lastAnalysisDate: Date = .distantPast
     private let minimumFrameInterval: TimeInterval = 0.16
+    /// Same cutoff the backend used for PaddleOCR (`OCR_MIN_CONFIDENCE`).
+    private let minimumReadableConfidence: Float = 0.5
 
     init() {
         request.recognitionLevel = .accurate
@@ -48,8 +56,8 @@ final class OCRFrameAnalyzer {
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right, options: [:])
             try? handler.perform([self.request])
 
-            let observations = (self.request.results ?? [])
-                .filter { $0.confidence >= 0.45 }
+            let results = self.request.results ?? []
+            let observations = results.filter { $0.confidence >= 0.45 }
 
             let region = self.mergedBoundingBox(for: observations)
             let confidence = observations.map(\.confidence).max() ?? 0
@@ -58,7 +66,8 @@ final class OCRFrameAnalyzer {
                 confidence: confidence,
                 blurScore: blurScore,
                 movementScore: movementScore,
-                timestamp: now
+                timestamp: now,
+                readableLines: self.readableLines(from: results)
             )
 
             self.isAnalyzing = false
@@ -78,6 +87,31 @@ final class OCRFrameAnalyzer {
 
         let available = preferred.filter { supported.contains($0) }
         return available.isEmpty ? preferred : available
+    }
+
+    /// Orders confident lines top-to-bottom, then left-to-right within a row.
+    private func readableLines(from observations: [VNRecognizedTextObservation]) -> [String] {
+        let lines = observations.compactMap { observation -> (text: String, box: CGRect)? in
+            guard let candidate = observation.topCandidates(1).first,
+                  candidate.confidence >= minimumReadableConfidence else { return nil }
+
+            let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : (text, observation.boundingBox)
+        }
+
+        // Vision's normalized coordinates have their origin at the bottom-left.
+        var rows: [[(text: String, box: CGRect)]] = []
+        for line in lines.sorted(by: { $0.box.midY > $1.box.midY }) {
+            if let rowLine = rows.last?.first, abs(rowLine.box.midY - line.box.midY) < min(rowLine.box.height, line.box.height) / 2 {
+                rows[rows.count - 1].append(line)
+            } else {
+                rows.append([line])
+            }
+        }
+
+        return rows.flatMap { row in
+            row.sorted { $0.box.minX < $1.box.minX }.map(\.text)
+        }
     }
 
     private func mergedBoundingBox(for observations: [VNRecognizedTextObservation]) -> CGRect? {

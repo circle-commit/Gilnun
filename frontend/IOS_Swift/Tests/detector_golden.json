@@ -1,0 +1,420 @@
+[
+  {
+    "image": "test_images/Bbox_0099_MP_SEL_011528.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": []
+  },
+  {
+    "image": "test_images/Bbox_0110_MP_SEL_013485.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "traffic_light",
+        "confidence": 0.6726,
+        "bbox": [
+          95.49,
+          165.69,
+          116.23,
+          215.81
+        ]
+      },
+      {
+        "label": "pole",
+        "confidence": 0.4462,
+        "bbox": [
+          68.37,
+          40.62,
+          97.96,
+          330.77
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0151_MP_SEL_023054.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "bollard",
+        "confidence": 0.7989,
+        "bbox": [
+          70.29,
+          556.42,
+          126.71,
+          672.18
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.7362,
+        "bbox": [
+          390.68,
+          519.59,
+          424.71,
+          546.19
+        ]
+      },
+      {
+        "label": "movable_signage",
+        "confidence": 0.7031,
+        "bbox": [
+          544.26,
+          492.18,
+          584.51,
+          592.39
+        ]
+      },
+      {
+        "label": "pole",
+        "confidence": 0.5936,
+        "bbox": [
+          191.34,
+          12.08,
+          221.78,
+          620.8
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.4424,
+        "bbox": [
+          326.22,
+          509.25,
+          372.76,
+          553.55
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0165_MP_SEL_026018.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "person",
+        "confidence": 0.9036,
+        "bbox": [
+          109.21,
+          477.55,
+          189.08,
+          662.58
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.8061,
+        "bbox": [
+          165.39,
+          411.88,
+          423.49,
+          525.91
+        ]
+      },
+      {
+        "label": "person",
+        "confidence": 0.8058,
+        "bbox": [
+          303.95,
+          503.91,
+          363.27,
+          667.84
+        ]
+      },
+      {
+        "label": "person",
+        "confidence": 0.8014,
+        "bbox": [
+          373.0,
+          498.83,
+          430.14,
+          657.07
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0167_MP_SEL_026601.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "tree_trunk",
+        "confidence": 0.5736,
+        "bbox": [
+          295.0,
+          407.89,
+          339.63,
+          712.04
+        ]
+      },
+      {
+        "label": "tree_trunk",
+        "confidence": 0.5279,
+        "bbox": [
+          204.48,
+          403.83,
+          228.47,
+          581.58
+        ]
+      },
+      {
+        "label": "pole",
+        "confidence": 0.3816,
+        "bbox": [
+          328.47,
+          6.46,
+          404.42,
+          687.81
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0168_MP_SEL_026930.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "car",
+        "confidence": 0.8855,
+        "bbox": [
+          461.28,
+          54.92,
+          606.89,
+          224.4
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.8585,
+        "bbox": [
+          391.26,
+          66.2,
+          503.53,
+          158.05
+        ]
+      },
+      {
+        "label": "person",
+        "confidence": 0.7434,
+        "bbox": [
+          309.76,
+          72.2,
+          335.48,
+          146.39
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.6759,
+        "bbox": [
+          270.66,
+          106.43,
+          302.81,
+          133.39
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.56,
+        "bbox": [
+          544.77,
+          51.4,
+          607.0,
+          290.8
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.4739,
+        "bbox": [
+          356.18,
+          98.1,
+          418.81,
+          142.31
+        ]
+      },
+      {
+        "label": "bicycle",
+        "confidence": 0.4693,
+        "bbox": [
+          63.24,
+          95.42,
+          142.77,
+          157.95
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0170_MP_SEL_031192.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "movable_signage",
+        "confidence": 0.7829,
+        "bbox": [
+          55.72,
+          732.86,
+          84.48,
+          809.15
+        ]
+      },
+      {
+        "label": "tree_trunk",
+        "confidence": 0.7653,
+        "bbox": [
+          387.82,
+          561.14,
+          445.75,
+          857.52
+        ]
+      },
+      {
+        "label": "tree_trunk",
+        "confidence": 0.733,
+        "bbox": [
+          494.27,
+          421.0,
+          598.28,
+          991.17
+        ]
+      },
+      {
+        "label": "car",
+        "confidence": 0.7307,
+        "bbox": [
+          0.0,
+          700.32,
+          155.28,
+          782.42
+        ]
+      },
+      {
+        "label": "pole",
+        "confidence": 0.6875,
+        "bbox": [
+          456.79,
+          89.9,
+          499.76,
+          890.91
+        ]
+      },
+      {
+        "label": "bollard",
+        "confidence": 0.6754,
+        "bbox": [
+          477.03,
+          1002.62,
+          540.52,
+          1079.93
+        ]
+      },
+      {
+        "label": "tree_trunk",
+        "confidence": 0.629,
+        "bbox": [
+          343.61,
+          620.02,
+          386.41,
+          809.96
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0179_MP_SEL_033633.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "tree_trunk",
+        "confidence": 0.5373,
+        "bbox": [
+          286.28,
+          167.42,
+          322.76,
+          409.78
+        ]
+      },
+      {
+        "label": "tree_trunk",
+        "confidence": 0.4206,
+        "bbox": [
+          480.85,
+          156.43,
+          517.77,
+          390.16
+        ]
+      }
+    ]
+  },
+  {
+    "image": "test_images/Bbox_0221_MP_SEL_037129.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": []
+  },
+  {
+    "image": "test_images/Bbox_0240_MP_SEL_042078.jpg",
+    "crop": [
+      656,
+      0,
+      608,
+      1080
+    ],
+    "detections": [
+      {
+        "label": "bench",
+        "confidence": 0.5798,
+        "bbox": [
+          1.45,
+          458.21,
+          111.23,
+          487.17
+        ]
+      }
+    ]
+  }
+]

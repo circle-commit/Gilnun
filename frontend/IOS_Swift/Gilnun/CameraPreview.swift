@@ -1,6 +1,6 @@
 //
 //  CameraPreview.swift
-//  Glass
+//  Gilnun
 //
 //  Created by JoMinHui on 4/10/26.
 //
@@ -15,7 +15,6 @@ struct CameraPreview: UIViewRepresentable {
         let view = PreviewView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
-        print("[BBoxDebug] CameraPreview makeUIView bounds=\(Int(view.bounds.width))x\(Int(view.bounds.height))")
         return view
     }
 
@@ -23,7 +22,6 @@ struct CameraPreview: UIViewRepresentable {
         guard let previewView = uiView as? PreviewView else { return }
         previewView.previewLayer.session = session
         previewView.previewLayer.videoGravity = .resizeAspectFill
-        print("[BBoxDebug] CameraPreview update bounds=\(Int(uiView.bounds.width))x\(Int(uiView.bounds.height))")
     }
 }
 

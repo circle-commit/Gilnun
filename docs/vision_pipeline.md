@@ -3,7 +3,7 @@
 ## Recommended Project Structure
 
 ```text
-KOJINGAPLA/
+Gilnun/
 |-- backend/
 |   |-- main.py
 |   |-- core/
