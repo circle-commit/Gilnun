@@ -41,6 +41,14 @@ nonisolated enum HorizontalPosition: String {
             self = .center
         }
     }
+
+    var koreanName: String {
+        switch self {
+        case .left: return "왼쪽"
+        case .center: return "정면"
+        case .right: return "오른쪽"
+        }
+    }
 }
 
 nonisolated enum RiskLevel: String, Comparable {
