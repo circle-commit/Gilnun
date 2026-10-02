@@ -7,25 +7,30 @@
 - **문자 읽기(OCR) 모드** — 표지판, 라벨, 문서, 메뉴 등 화면 속 글자를 읽어 음성으로 안내
 - **실시간 보행 안내(Live) 모드** — 전방의 장애물·차량·사람 등을 탐지하고 위치(왼쪽/정면/오른쪽)와 위험도를 분석해 음성으로 안내
 
-iOS(SwiftUI) / Android(Kotlin) 앱이 카메라 프레임을 FastAPI 백엔드로 전송하면, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)을 사용해 음성 안내 문장을 생성하여 반환합니다.
+**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLOv8n(Core ML)으로 객체를 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱은 아직 카메라 프레임을 FastAPI 백엔드로 전송하며, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 음성 안내 문장을 생성합니다.
 
 ---
 
 ## 시스템 구성
 
 ```
+iOS (온디바이스)
+┌──────────────────────────────────────────────────────────┐
+│ 카메라 ─► Live: YOLOv8n (Core ML, 초당 약 5회) ─► 위치·위험도 분석 ─► 음성/햅틱 │
+│        └► Text: Apple Vision 한국어 OCR ───────────────────► 음성/햅틱 │
+└──────────────────────────────────────────────────────────┘
+
+Android (서버 연동)
 ┌──────────────┐   카메라 프레임   ┌─────────────────────┐
-│  모바일 앱     │  (multipart 업로드) │   FastAPI 백엔드       │
-│ iOS / Android │ ───────────────► │   POST /analyze      │
-│               │                  │                      │
-│ - 카메라 캡처   │                  │  mode=text → PaddleOCR │
-│ - 모드 전환    │                  │  mode=live → YOLOv8n   │
-│ - 음성/햅틱 출력 │ ◄─────────────── │  위치·위험도 분석 후     │
-└──────────────┘   음성 안내 JSON   │  음성 안내 문장 생성     │
+│  Android 앱   │  (multipart 업로드) │   FastAPI 백엔드       │
+│ - 카메라 캡처   │ ───────────────► │   POST /analyze      │
+│ - 모드 전환    │                  │  mode=text → PaddleOCR │
+│ - 음성/햅틱 출력 │ ◄─────────────── │  mode=live → YOLOv8n   │
+└──────────────┘   음성 안내 JSON   │  위치·위험도 분석·문장 생성 │
                                    └─────────────────────┘
 ```
 
-같은 `/analyze` 엔드포인트가 `mode` 파라미터(`text` / `live`)로 두 모드를 모두 처리합니다.
+백엔드는 같은 `/analyze` 엔드포인트가 `mode` 파라미터(`text` / `live`)로 두 모드를 모두 처리합니다. iOS 앱의 위험도·거리·안내 문장 로직은 백엔드 Python 코드를 Swift로 옮긴 것이며, 테스트로 두 구현의 결과가 같은지 확인합니다.
 
 ---
 
@@ -45,12 +50,14 @@ KOJINGAPLA/
 │   │   └── text_service.py             # PaddleOCR 문자 인식
 │   └── tests/                  # pytest 테스트
 ├── frontend/
-│   ├── IOS_Swift/Glass/        # SwiftUI iOS 앱
+│   ├── IOS_Swift/Glass/        # SwiftUI iOS 앱 (온디바이스 Core ML 모델 포함)
+│   ├── IOS_Swift/Tests/        # iOS 로직·모델 검증 테스트 (run_tests.sh)
 │   └── Android/                # Kotlin(CameraX) Android 앱
 ├── vision/                     # YOLOv8n 학습/검증/추론 스크립트
 │   ├── train.py                # 모델 학습
 │   ├── validate.py             # 모델 검증
 │   ├── predict.py              # 추론 CLI + 백엔드용 Detector
+│   ├── export_coreml.py        # iOS용 Core ML 변환
 │   └── tracker_logic.py        # 접근(approach) 추적 로직
 ├── scripts/
 │   └── convert_cvat_to_yolo.py # CVAT 어노테이션 → YOLO 포맷 변환
@@ -101,12 +108,30 @@ python -m pip install -r ../requirements.txt
 ## 프론트엔드
 
 ### iOS (`frontend/IOS_Swift`)
-SwiftUI 기반 `Glass` 앱. 카메라 미리보기, 모드 전환, OCR 프레임 안정성 분석, 중복 음성 억제, 음성 출력(`SpeechManager`), 햅틱 피드백(`HapticFeedbackManager`)을 포함합니다. Xcode에서 `Glass.xcodeproj`를 엽니다.
+SwiftUI 기반 `Glass` 앱. 서버 없이 기기에서 동작합니다. Xcode에서 `Glass.xcodeproj`를 열고 실제 기기에서 실행합니다(시뮬레이터에는 카메라가 없습니다).
+
+- **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLOv8n, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
+- **문자 읽기**: `OCRFrameAnalyzer`가 Apple Vision으로 한국어·영어 문자를 인식하고, 화면이 안정되면 인식한 문장을 읽어 줍니다.
+- 그 밖에 중복 음성 억제, 음성 출력(`SpeechManager` — 더 위급한 안내만 말을 끊고 끼어듦), 햅틱 피드백(`HapticFeedbackManager`)을 포함합니다.
+
+학습한 모델을 다시 변환하려면 macOS에서 다음을 실행합니다(`ultralytics`, `coremltools` 필요).
+
+```bash
+python -m vision.export_coreml
+```
+
+iOS 로직이 백엔드와 같은 결과를 내는지, Core ML 모델이 PyTorch 모델과 같은 객체를 찾는지 macOS에서 확인할 수 있습니다(Xcode 명령줄 도구와 `python3`만 필요).
+
+```bash
+frontend/IOS_Swift/Tests/run_tests.sh
+```
+
+`backend/services/guidance_message_service.py` 등 안내 로직을 바꿀 때는 Swift 코드도 함께 고치고 이 테스트를 실행하세요. 모델을 다시 학습했다면 `python frontend/IOS_Swift/Tests/make_detector_golden.py`로 기준 탐지 결과도 갱신합니다.
 
 ### Android (`frontend/Android`)
 iOS `Glass` 앱의 네이티브 Android 버전. CameraX로 카메라 프레임을 스트리밍하고, ML Kit 한국어 텍스트 인식으로 OCR 대상의 안정성을 로컬에서 판단한 뒤 백엔드 `/analyze`를 호출합니다. Android Studio에서 `frontend/Android`를 엽니다.
 
-> 앱의 `SERVER_URL` / 백엔드 주소를 실행 환경에 맞게 수정해야 합니다. 카메라·진동 기능은 실제 기기에서만 동작합니다.
+> Android 앱의 `SERVER_URL`을 백엔드 주소에 맞게 수정해야 합니다. 카메라·진동 기능은 실제 기기에서만 동작합니다.
 
 ---
 
@@ -230,4 +255,4 @@ python scripts/convert_cvat_to_yolo.py
 - 세션별 객체 추적으로 접근 경고 정교화
 - 깊이(depth) 기반 거리 추정 강화
 - 문자 감지·위험 경고·방향 안내용 햅틱 피드백 확장
-- 온디바이스 추론을 통한 지연 시간 단축 및 다국어 OCR 개선
+- Android 앱 온디바이스 전환(TFLite) 및 다국어 OCR 개선

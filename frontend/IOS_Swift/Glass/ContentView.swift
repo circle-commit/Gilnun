@@ -79,7 +79,7 @@ struct ContentView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 14)
 
-                ModePill(mode: mode, processing: cam.isProcessing)
+                ModePill(mode: mode)
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
 
@@ -93,8 +93,7 @@ struct ContentView: View {
                 if mode == .ocr {
                     OcrPanel(
                         status: cam.liveOCRStatus.rawValue,
-                        result: cam.latestDetectedText,
-                        processing: cam.isProcessing
+                        result: cam.latestDetectedText
                     )
                     .padding(.horizontal, 24)
                 }
@@ -153,17 +152,13 @@ private struct BoundingBoxOverlay: View {
                 ForEach(boxes) { box in
                     // Map into preview space, then clip to the visible preview bounds so a
                     // box never spills past the cropped edges of the aspect-fill image.
-                    let mappedFrame = mapped(box.rect, view: geo.size)
-                    let frame = mappedFrame.intersection(bounds)
+                    let frame = mapped(box.rect, view: geo.size).intersection(bounds)
                     if !frame.isNull, frame.width > 1, frame.height > 1 {
                         BoundingBoxView(
                             label: box.label,
                             color: P.riskColor(for: box.riskScore),
                             frame: frame
                         )
-                        .onAppear {
-                            logMapping(normalized: box.rect, mapped: mappedFrame, clipped: frame, view: geo.size)
-                        }
                     }
                 }
             }
@@ -190,27 +185,6 @@ private struct BoundingBoxOverlay: View {
             y: offY + n.minY * dispH,
             width: n.width * dispW,
             height: n.height * dispH
-        )
-    }
-
-    private func logMapping(normalized n: CGRect, mapped: CGRect, clipped: CGRect, view: CGSize) {
-        guard imageSize.width > 0, imageSize.height > 0 else { return }
-        let scale = max(view.width / imageSize.width, view.height / imageSize.height)
-        let dispW = imageSize.width * scale
-        let dispH = imageSize.height * scale
-        let offX = (view.width - dispW) / 2
-        let offY = (view.height - dispH) / 2
-        print(
-            "[BBoxDebug] overlay view=\(Int(view.width))x\(Int(view.height)) " +
-            "imageSize=\(Int(imageSize.width))x\(Int(imageSize.height)) scale=\(String(format: "%.4f", scale)) " +
-            "display=\(String(format: "%.1f", dispW))x\(String(format: "%.1f", dispH)) " +
-            "cropOffset=(\(String(format: "%.1f", offX)),\(String(format: "%.1f", offY))) " +
-            "normalized=x:\(String(format: "%.4f", n.minX)) y:\(String(format: "%.4f", n.minY)) " +
-            "w:\(String(format: "%.4f", n.width)) h:\(String(format: "%.4f", n.height)) " +
-            "mapped=x:\(String(format: "%.1f", mapped.minX)) y:\(String(format: "%.1f", mapped.minY)) " +
-            "w:\(String(format: "%.1f", mapped.width)) h:\(String(format: "%.1f", mapped.height)) " +
-            "clipped=x:\(String(format: "%.1f", clipped.minX)) y:\(String(format: "%.1f", clipped.minY)) " +
-            "w:\(String(format: "%.1f", clipped.width)) h:\(String(format: "%.1f", clipped.height))"
         )
     }
 }
@@ -279,7 +253,6 @@ private struct StatusBar: View {
 // MARK: - Mode Pill
 private struct ModePill: View {
     let mode: AppMode
-    let processing: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -292,13 +265,6 @@ private struct ModePill: View {
                 .font(.system(size: 17, weight: .bold))  // 13→17
                 .foregroundStyle(.white)
                 .padding(.leading, 9)
-
-            if processing {
-                ProgressView()
-                    .tint(P.primary)
-                    .scaleEffect(0.75)
-                    .padding(.leading, 10)
-            }
 
             Spacer()
         }
@@ -347,7 +313,6 @@ private struct GuidanceCard: View {
 private struct OcrPanel: View {
     let status: String
     let result: String?
-    let processing: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -366,12 +331,6 @@ private struct OcrPanel: View {
                     .foregroundStyle(P.dimText)
 
                 Spacer()
-
-                if processing {
-                    ProgressView()
-                        .tint(P.primary)
-                        .scaleEffect(0.85)
-                }
             }
 
             if let text = result, !text.isEmpty {

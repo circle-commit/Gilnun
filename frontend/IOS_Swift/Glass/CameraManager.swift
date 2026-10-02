@@ -7,7 +7,7 @@
 
 import AVFoundation
 import Combine
-import UIKit
+import CoreImage
 
 final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     enum ProcessingMode: String {
@@ -18,8 +18,6 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     @Published var session = AVCaptureSession()
     @Published var latestGuide = "실시간 안내 모드가 준비되었습니다."
     @Published var latestDetectedText: String?
-    @Published var textCaptureImage: UIImage?
-    @Published var isProcessing = false
     @Published var liveOCRStatus: LiveOCRStatus = .searching
     @Published var latestLiveDirection = "center"
     @Published var latestLiveRiskScore = 0
@@ -34,22 +32,26 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private static let liveBoxMaxCount = 2
 
     private let output = AVCaptureVideoDataOutput()
-    private let imageContext = CIContext()
+    private let videoQueue = DispatchQueue(label: "videoQueue")
     private let frameAnalyzer = OCRFrameAnalyzer()
     private let stabilityTracker = TextStabilityTracker()
     private let duplicateSuppressor = DuplicateTextSuppressor()
     private let speechManager = SpeechManager()
     private let hapticManager = HapticFeedbackManager()
-    private var latestFrame: UIImage?
-    private var latestFrameSize: CGSize = .zero
     private var currentMode: ProcessingMode = .liveAnalyzing
-    private var lastLiveRequestDate: Date = .distantPast
     private var lastFullOCRRequestDate: Date = .distantPast
-    private let liveRequestInterval: TimeInterval = 2.0
     private let fullOCRCooldown: TimeInterval = 3.0
-    private let serverURL = "http://100.64.174.44:8000/analyze"
-    private lazy var ocrService = OCRService(serverURL: serverURL)
-    private var loggedFirstFrameGeometry = false
+
+    // Live mode runs entirely on the video queue; these are only touched there.
+    private let sceneAnalyzer = SceneAnalyzer()
+    private var objectDetector: ObjectDetector?
+    private var objectDetectorFailed = false
+    private var lastLiveAnalysisTime: TimeInterval = 0
+    private var lastLiveGuideTime: TimeInterval = 0
+    /// About five detector runs per second: fast enough to track approaching objects.
+    private let liveAnalysisInterval: TimeInterval = 0.2
+    /// How long a spoken live message stays on the guidance card.
+    private let liveGuideDisplayDuration: TimeInterval = 3.0
 
     override init() {
         super.init()
@@ -60,13 +62,17 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     func setMode(_ mode: ProcessingMode) {
         currentMode = mode
         stabilityTracker.reset()
+        speechManager.clearPendingGuidance()
+        videoQueue.async {
+            self.sceneAnalyzer.reset()
+            self.lastLiveGuideTime = ProcessInfo.processInfo.systemUptime
+        }
 
         let message: String
         let shouldAnnounceMode: Bool
         switch mode {
         case .liveAnalyzing:
             latestDetectedText = nil
-            textCaptureImage = nil
             liveOCRStatus = .searching
             latestLiveDirection = "center"
             latestLiveRiskScore = 0
@@ -76,7 +82,6 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             shouldAnnounceMode = true
         case .textDescription:
             latestDetectedText = nil
-            textCaptureImage = nil
             liveOCRStatus = .searching
             latestLiveDirection = "center"
             latestLiveRiskScore = 0
@@ -86,21 +91,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             shouldAnnounceMode = false
         }
 
-        updateResponse(
-            AnalysisResponse(
-                status: "ready",
-                mode: mode.rawValue,
-                detectedText: nil,
-                voiceGuide: message,
-                warnings: nil,
-                detections: nil
-            ),
-            shouldSpeak: shouldAnnounceMode
-        )
-    }
-
-    func triggerTextCapture() {
-        runFullTextOCRFromLatestFrame(allowDuplicateSpeech: true)
+        updateResponse(voiceGuide: message, detectedText: nil, shouldSpeak: shouldAnnounceMode)
     }
 
     private func checkPermissions() {
@@ -111,17 +102,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             AVCaptureDevice.requestAccess(for: .video) { _ in }
         default:
             liveOCRStatus = .unavailable
-            updateResponse(
-                AnalysisResponse(
-                    status: "error",
-                    mode: currentMode.rawValue,
-                    detectedText: nil,
-                    voiceGuide: "이 앱을 사용하려면 카메라 권한이 필요합니다.",
-                    warnings: nil,
-                    detections: nil
-                ),
-                shouldSpeak: false
-            )
+            updateResponse(voiceGuide: "이 앱을 사용하려면 카메라 권한이 필요합니다.", detectedText: nil, shouldSpeak: false)
         }
     }
 
@@ -138,7 +119,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         ]
-        output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "videoQueue"))
+        output.setSampleBufferDelegate(self, queue: videoQueue)
         if session.canAddOutput(output) {
             session.addOutput(output)
         }
@@ -152,26 +133,119 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         switch currentMode {
         case .liveAnalyzing:
-            guard !isProcessing else { return }
-            guard Date().timeIntervalSince(lastLiveRequestDate) >= liveRequestInterval else { return }
-            guard let image = imageFromSampleBuffer(sampleBuffer) else { return }
-
-            latestFrame = image
-            latestFrameSize = image.size
-            lastLiveRequestDate = Date()
-            processImage(image, mode: .liveAnalyzing, allowDuplicateSpeech: true)
-
+            analyzeLiveFrame(sampleBuffer)
         case .textDescription:
             analyzeTextFrame(sampleBuffer)
         }
     }
 
-    private func analyzeTextFrame(_ sampleBuffer: CMSampleBuffer) {
-        let candidateFrame = imageFromSampleBuffer(sampleBuffer)
-        if let candidateFrame {
-            latestFrame = candidateFrame
+    // MARK: - Live guidance (on-device YOLO)
+
+    private func analyzeLiveFrame(_ sampleBuffer: CMSampleBuffer) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastLiveAnalysisTime >= liveAnalysisInterval else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        lastLiveAnalysisTime = now
+
+        // Loaded on the first live frame (off the main thread); the model is bundled with the app.
+        guard let detector = loadObjectDetectorIfNeeded() else { return }
+
+        let frame = ObjectDetector.uprightFrame(from: pixelBuffer)
+        let frameSize = frame.extent.size
+        let detections: [RawDetection]
+        do {
+            detections = try detector.detect(in: frame)
+        } catch {
+            // Skip this frame; the next one retries.
+            return
         }
 
+        let result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now)
+        publishLiveResult(result, frameSize: frameSize, now: now)
+    }
+
+    private func loadObjectDetectorIfNeeded() -> ObjectDetector? {
+        if let objectDetector {
+            return objectDetector
+        }
+        guard !objectDetectorFailed else { return nil }
+
+        do {
+            let detector = try ObjectDetector()
+            objectDetector = detector
+            return detector
+        } catch {
+            objectDetectorFailed = true
+            print("Object detector unavailable: \(error)")
+            updateResponse(voiceGuide: "비전 모델을 사용할 수 없습니다.", detectedText: nil, shouldSpeak: true)
+            return nil
+        }
+    }
+
+    private func publishLiveResult(_ result: LiveSceneResult, frameSize: CGSize, now: TimeInterval) {
+        let hasNewGuide = !result.voiceGuide.isEmpty
+        if hasNewGuide {
+            lastLiveGuideTime = now
+        }
+        let shouldClearGuide = !hasNewGuide && now - lastLiveGuideTime > liveGuideDisplayDuration
+        let boxes = makeLiveBoxes(from: result.detections, imageSize: frameSize)
+        let primaryDetection = result.detections.first
+
+        DispatchQueue.main.async {
+            guard self.currentMode == .liveAnalyzing else { return }
+
+            if hasNewGuide {
+                self.latestGuide = result.voiceGuide
+            } else if shouldClearGuide && !self.latestGuide.isEmpty {
+                self.latestGuide = ""
+            }
+            self.latestLiveDirection = primaryDetection?.position.rawValue ?? "center"
+            self.latestLiveRiskScore = primaryDetection?.riskScore ?? 0
+            self.liveImageSize = frameSize
+            self.liveBoxes = boxes
+        }
+
+        if hasNewGuide && currentMode == .liveAnalyzing {
+            speechManager.speakGuidance(result.voiceGuide, urgency: result.voiceUrgency)
+        }
+    }
+
+    /// Builds bounding boxes for the highest-risk detections only.
+    ///
+    /// - Detections arrive sorted by guidance priority (risk score first).
+    /// - Nothing is drawn unless at least one object reaches `liveBoxMinRisk`, so a
+    ///   calm scene keeps the camera preview clean.
+    /// - At most `liveBoxMaxCount` boxes are returned (the top objects), each carrying
+    ///   its own risk score so the UI can color it independently.
+    private func makeLiveBoxes(from detections: [SceneDetection], imageSize: CGSize) -> [LiveGuidanceBox] {
+        guard imageSize.width > 0, imageSize.height > 0 else { return [] }
+
+        return detections
+            .filter { $0.riskScore >= Self.liveBoxMinRisk }
+            .prefix(Self.liveBoxMaxCount)
+            .map { detection in
+                LiveGuidanceBox(
+                    rect: normalizedRect(for: detection.bbox, imageSize: imageSize),
+                    riskScore: detection.riskScore,
+                    label: detection.koreanLabel
+                )
+            }
+    }
+
+    /// Converts a detector bounding box (upright frame pixels) into a normalized
+    /// (0...1) rect in the portrait space the camera preview is rendered in.
+    private func normalizedRect(for bbox: BoundingBox, imageSize: CGSize) -> CGRect {
+        CGRect(
+            x: bbox.x1 / imageSize.width,
+            y: bbox.y1 / imageSize.height,
+            width: (bbox.x2 - bbox.x1) / imageSize.width,
+            height: (bbox.y2 - bbox.y1) / imageSize.height
+        )
+    }
+
+    // MARK: - Text reading (on-device Vision OCR)
+
+    private func analyzeTextFrame(_ sampleBuffer: CMSampleBuffer) {
         frameAnalyzer.analyze(sampleBuffer: sampleBuffer) { [weak self] analysis in
             guard let self else { return }
 
@@ -180,208 +254,58 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
 
             guard decision.shouldRunFullOCR else { return }
             guard self.currentMode == .textDescription else { return }
-            guard !self.isProcessing else { return }
             guard Date().timeIntervalSince(self.lastFullOCRRequestDate) >= self.fullOCRCooldown else {
                 self.updateLiveOCRStatus(.coolingDown)
                 return
             }
-            guard let image = candidateFrame else { return }
 
-            self.latestFrame = image
             self.lastFullOCRRequestDate = Date()
             self.hapticManager.stopRepeatingPulses()
-            self.runFullTextOCRFromLatestFrame(allowDuplicateSpeech: false)
+            self.readText(analysis.readableText)
         }
     }
 
-    private func runFullTextOCRFromLatestFrame(allowDuplicateSpeech: Bool) {
-        guard currentMode == .textDescription else { return }
-        guard let frame = latestFrame else {
-            updateResponse(
-                AnalysisResponse(
-                    status: "error",
-                    mode: currentMode.rawValue,
-                    detectedText: nil,
-                    voiceGuide: "카메라 화면이 아직 준비되지 않았습니다. 다시 시도해 주세요.",
-                    warnings: nil,
-                    detections: nil
-                ),
-                shouldSpeak: true
-            )
-            return
+    private func readText(_ detectedText: String) {
+        let voiceGuide = detectedText.isEmpty
+            ? "문자 읽기 모드입니다. 현재 화면에서 읽을 수 있는 문자를 찾지 못했습니다."
+            : "문자 읽기 모드입니다. 인식된 문자는 다음과 같습니다. \(detectedText)"
+        let shouldSpeak = !detectedText.isEmpty && duplicateSuppressor.shouldSpeak(detectedText)
+
+        if shouldSpeak {
+            hapticManager.stopRepeatingPulses()
+            hapticManager.play(.readableTextConfirmed)
         }
 
-        textCaptureImage = frame
-        updateLiveOCRStatus(.reading)
-        processImage(frame, mode: .textDescription, allowDuplicateSpeech: allowDuplicateSpeech)
-    }
-
-    private func imageFromSampleBuffer(_ buffer: CMSampleBuffer) -> UIImage? {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(buffer) else { return nil }
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        // The sensor's CGImage is landscape; `.right` only makes `size` *report* portrait.
-        // Rotate the CI pixels so the rotation is baked into the actual bitmap — otherwise
-        // `jpegData()` can ship landscape pixels + an EXIF tag that the backend's `cv2.imdecode` ignores,
-        // and YOLO's `bbox_xyxy` comes back in a transposed space that no longer matches
-        // `image.size`, throwing the overlay boxes completely out of alignment.
-        let uprightCIImage = ciImage.oriented(.right)
-        guard let cgImage = imageContext.createCGImage(uprightCIImage, from: uprightCIImage.extent) else { return nil }
-        let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: .up)
-
-        if !loggedFirstFrameGeometry {
-            loggedFirstFrameGeometry = true
-            print(
-                "[BBoxDebug] sampleBuffer extent=\(Int(ciImage.extent.width))x\(Int(ciImage.extent.height)) " +
-                "uprightImage extent=\(Int(uprightCIImage.extent.width))x\(Int(uprightCIImage.extent.height)) " +
-                "uiImage size=\(Int(image.size.width))x\(Int(image.size.height)) orientation=\(image.imageOrientation.rawValue)"
-            )
-        }
-
-        return image
-    }
-
-    private func processImage(_ image: UIImage, mode: ProcessingMode, allowDuplicateSpeech: Bool) {
-        guard !isProcessing else { return }
+        updateResponse(voiceGuide: voiceGuide, detectedText: detectedText, shouldSpeak: shouldSpeak)
 
         DispatchQueue.main.async {
-            self.isProcessing = true
-        }
+            guard self.currentMode == .textDescription else { return }
 
-        ocrService.analyze(image: image, mode: mode) { [weak self] response in
-            guard let self else { return }
-            guard self.currentMode == mode else {
-                DispatchQueue.main.async {
-                    self.isProcessing = false
-                }
-                return
-            }
-            let shouldSpeak = self.shouldSpeak(response: response, mode: mode, allowDuplicateSpeech: allowDuplicateSpeech)
-
-            if shouldSpeak && mode == .textDescription {
-                self.hapticManager.stopRepeatingPulses()
-                self.hapticManager.play(.readableTextConfirmed)
-            }
-
-            self.updateResponse(response, shouldSpeak: shouldSpeak)
-
-            DispatchQueue.main.async {
-                self.isProcessing = false
-                if mode == .textDescription {
-                    self.liveOCRStatus = response.status == "error" ? .searching : .coolingDown
-                    if response.status == "error" {
-                        self.hapticManager.play(.ocrFailed)
-                    } else if !shouldSpeak {
-                        self.hapticManager.updateOCRPulseState(.searching)
-                    }
-                }
+            self.liveOCRStatus = .coolingDown
+            if !shouldSpeak {
+                self.hapticManager.updateOCRPulseState(.searching)
             }
         }
     }
 
-    private func shouldSpeak(response: AnalysisResponse, mode: ProcessingMode, allowDuplicateSpeech: Bool) -> Bool {
-        guard mode == .textDescription else { return true }
-        guard response.status != "error" else { return true }
-        guard let detectedText = response.detectedText, !detectedText.isEmpty else { return allowDuplicateSpeech }
-        return allowDuplicateSpeech || duplicateSuppressor.shouldSpeak(detectedText)
-    }
-
-    private func updateResponse(_ response: AnalysisResponse, shouldSpeak: Bool) {
+    private func updateResponse(voiceGuide: String, detectedText: String?, shouldSpeak: Bool) {
         DispatchQueue.main.async {
-            self.latestGuide = response.voiceGuide
-            self.latestDetectedText = response.detectedText
-            self.updateLiveGuidanceState(from: response)
+            self.latestGuide = voiceGuide
+            self.latestDetectedText = detectedText
         }
 
         guard shouldSpeak else { return }
         hapticManager.stopRepeatingPulses()
-        speechManager.speak(response.voiceGuide) { [weak self] in
+        speechManager.speak(voiceGuide) { [weak self] in
             guard let self else { return }
             guard self.currentMode == .textDescription else { return }
-            guard !self.isProcessing else { return }
             self.hapticManager.updateOCRPulseState(.searching)
         }
-    }
-
-    private func updateLiveGuidanceState(from response: AnalysisResponse) {
-        guard response.mode == ProcessingMode.liveAnalyzing.rawValue else { return }
-        guard response.status != "error",
-              let detections = response.detections,
-              let primaryDetection = detections.first else {
-            latestLiveDirection = "center"
-            latestLiveRiskScore = 0
-            liveBoxes = []
-            return
-        }
-
-        // Voice-guidance state is derived exactly as before — unchanged.
-        latestLiveDirection = primaryDetection.position ?? "center"
-        latestLiveRiskScore = primaryDetection.riskScore ?? 0
-
-        // Visualization is additive: pick only the few highest-risk objects to draw.
-        liveImageSize = latestFrameSize
-        liveBoxes = makeLiveBoxes(from: detections, imageSize: latestFrameSize)
-    }
-
-    /// Builds bounding boxes for the highest-risk detections only.
-    ///
-    /// - Detections are sorted by `risk_score` (descending).
-    /// - Nothing is drawn unless at least one object reaches `liveBoxMinRisk`, so a
-    ///   calm scene keeps the camera preview clean.
-    /// - At most `liveBoxMaxCount` boxes are returned (the top objects), each carrying
-    ///   its own risk score so the UI can color it independently.
-    private func makeLiveBoxes(from detections: [DetectionResponse], imageSize: CGSize) -> [LiveGuidanceBox] {
-        guard imageSize.width > 0, imageSize.height > 0 else { return [] }
-
-        let ranked = detections
-            .filter { ($0.riskScore ?? 0) >= Self.liveBoxMinRisk && ($0.bboxXYXY?.count ?? 0) == 4 }
-            .sorted { ($0.riskScore ?? 0) > ($1.riskScore ?? 0) }
-
-        return ranked.prefix(Self.liveBoxMaxCount).compactMap { detection in
-            guard let bbox = detection.bboxXYXY, bbox.count == 4 else { return nil }
-            return LiveGuidanceBox(
-                rect: normalizedRect(fromBBox: bbox, imageSize: imageSize),
-                riskScore: detection.riskScore ?? 0,
-                label: detection.koreanLabel ?? detection.label
-            )
-        }
-    }
-
-    /// Converts a backend bounding box into a normalized (0...1) rect in the upright
-    /// portrait space the camera preview is rendered in.
-    ///
-    /// `uprightImage(from:)` bakes the capture's `.right` orientation into the pixel buffer
-    /// before upload, so the uploaded JPEG — and therefore the backend-decoded frame and
-    /// YOLO's `bbox_xyxy` — all live in the same upright-portrait space as `imageSize`. No
-    /// rotation is needed here; we just normalize against the (already portrait) `imageSize`.
-    private func normalizedRect(fromBBox bbox: [Double], imageSize: CGSize) -> CGRect {
-        let width = imageSize.width
-        let height = imageSize.height
-        guard width > 0, height > 0 else { return .zero }
-
-        let bx1 = min(bbox[0], bbox[2])
-        let by1 = min(bbox[1], bbox[3])
-        let bx2 = max(bbox[0], bbox[2])
-        let by2 = max(bbox[1], bbox[3])
-
-        let normalized = CGRect(
-            x: bx1 / width,
-            y: by1 / height,
-            width: (bx2 - bx1) / width,
-            height: (by2 - by1) / height
-        )
-        print(
-            "[BBoxDebug] backend bbox_xyxy=\(bbox.map { String(format: "%.2f", $0) }.joined(separator: ",")) " +
-            "imageSize=\(Int(width))x\(Int(height)) " +
-            "normalized=x:\(String(format: "%.4f", normalized.minX)) y:\(String(format: "%.4f", normalized.minY)) " +
-            "w:\(String(format: "%.4f", normalized.width)) h:\(String(format: "%.4f", normalized.height))"
-        )
-        return normalized
     }
 
     private func updateLiveOCRStatus(_ status: LiveOCRStatus) {
         DispatchQueue.main.async {
             guard self.currentMode == .textDescription else { return }
-            guard !self.isProcessing || status == .reading else { return }
 
             if self.liveOCRStatus != status {
                 self.liveOCRStatus = status
@@ -393,17 +317,11 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
 
             switch status {
             case .searching, .coolingDown:
-                if !self.isProcessing {
-                    self.hapticManager.updateOCRPulseState(.searching)
-                }
+                self.hapticManager.updateOCRPulseState(.searching)
             case .detected:
-                if !self.isProcessing {
-                    self.hapticManager.updateOCRPulseState(.detected)
-                }
+                self.hapticManager.updateOCRPulseState(.detected)
             case .stabilizing:
-                if !self.isProcessing {
-                    self.hapticManager.updateOCRPulseState(.stabilizing)
-                }
+                self.hapticManager.updateOCRPulseState(.stabilizing)
             case .reading, .unavailable:
                 self.hapticManager.stopRepeatingPulses()
             }
