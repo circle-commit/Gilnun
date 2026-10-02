@@ -74,6 +74,7 @@ struct ContentView: View {
         ZStack {
             CameraPreview(session: cam.session)
                 .ignoresSafeArea()
+                .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
             TopScrim()
@@ -106,17 +107,30 @@ struct ContentView: View {
                 }
 
                 ModeSwitcher(selected: $mode) { m in
-                    cam.setMode(m.processingMode)
+                    cam.switchMode(to: m.processingMode)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
+        // Anyone who can't find the mode buttons can switch from anywhere on screen:
+        // double tap without VoiceOver, two-finger double tap (Magic Tap) with VoiceOver.
+        .contentShape(Rectangle())
+        .gesture(TapGesture(count: 2).onEnded { toggleMode() })
+        .accessibilityAction(.magicTap) { toggleMode() }
         .preferredColorScheme(.dark)
         .animation(transition, value: severity)
         .animation(transition, value: cam.latestGuide)
         .animation(transition, value: mode)
         .onAppear { cam.setMode(mode.processingMode) }
+    }
+
+    private func toggleMode() {
+        let next: AppMode = mode == .live ? .ocr : .live
+        withAnimation(reduceMotion ? nil : .snappy) {
+            mode = next
+        }
+        cam.switchMode(to: next.processingMode)
     }
 
     private var transition: Animation? {
@@ -286,6 +300,7 @@ private struct ModeSwitcher: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(mode.accessibilityLabel)
+                .accessibilityHint("두 손가락으로 두 번 탭해도 모드를 바꿀 수 있어요.")
                 .accessibilityAddTraits(selected == mode ? .isSelected : [])
             }
         }

@@ -8,6 +8,7 @@
 import AVFoundation
 import Combine
 import CoreImage
+import UIKit
 
 final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     enum ProcessingMode: String {
@@ -67,6 +68,12 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         setupSession()
     }
 
+    /// A mode change the user asked for (button, double tap or Magic Tap): confirm it with a haptic.
+    func switchMode(to mode: ProcessingMode) {
+        hapticManager.play(.modeChanged)
+        setMode(mode)
+    }
+
     func setMode(_ mode: ProcessingMode) {
         currentMode = mode
         stabilityTracker.reset()
@@ -78,7 +85,6 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         }
 
         let message: String
-        let shouldAnnounceMode: Bool
         switch mode {
         case .liveAnalyzing:
             isLiveAnalysisRunning = false
@@ -88,8 +94,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             latestLiveRiskScore = 0
             liveBoxes = []
             hapticManager.stopRepeatingPulses()
-            message = "실시간 보행 안내를 시작합니다."
-            shouldAnnounceMode = true
+            message = "실시간 보행 안내를 시작합니다." + modeSwitchHint(to: "문자 읽기")
         case .textDescription:
             latestDetectedText = nil
             liveOCRStatus = .searching
@@ -97,11 +102,22 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             latestLiveRiskScore = 0
             liveBoxes = []
             hapticManager.updateOCRPulseState(.searching)
-            message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요."
-            shouldAnnounceMode = false
+            message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요." + modeSwitchHint(to: "실시간 안내")
         }
 
-        updateResponse(voiceGuide: message, detectedText: nil, shouldSpeak: shouldAnnounceMode)
+        // Always announce the new mode: users who can't see the screen need to hear which one is on.
+        updateResponse(voiceGuide: message, detectedText: nil, shouldSpeak: true)
+    }
+
+    /// Explains the switch gesture in the first few mode announcements, until it has likely been learned.
+    private func modeSwitchHint(to target: String) -> String {
+        let key = "modeSwitchHintCount"
+        let count = UserDefaults.standard.integer(forKey: key)
+        guard count < 3 else { return "" }
+
+        UserDefaults.standard.set(count + 1, forKey: key)
+        let gesture = UIAccessibility.isVoiceOverRunning ? "두 손가락으로 두 번 탭하면" : "화면을 두 번 누르면"
+        return " \(gesture) \(target)로 바뀝니다."
     }
 
     private func checkPermissions() {
