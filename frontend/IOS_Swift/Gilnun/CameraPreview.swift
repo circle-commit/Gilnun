@@ -1,6 +1,6 @@
 //
 //  CameraPreview.swift
-//  Glass
+//  Gilnun
 //
 //  Created by JoMinHui on 4/10/26.
 //

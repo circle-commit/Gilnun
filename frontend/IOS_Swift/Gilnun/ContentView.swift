@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  Glass — redesigned UI (large text for low vision)
+//  Gilnun — redesigned UI (large text for low vision)
 //
 
 import SwiftUI
@@ -240,7 +240,7 @@ private struct StatusBar: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(P.primary)
 
-            Text("GLASS")
+            Text("길눈")
                 .font(.system(size: 18, weight: .heavy))
                 .foregroundStyle(.white)
 

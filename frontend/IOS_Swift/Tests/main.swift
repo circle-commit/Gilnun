@@ -1,6 +1,6 @@
 import Foundation
 
-// Usage: GlassTests <guidance_fixtures.json> <SidewalkDetector.mlmodelc> <detector_golden.json> <repo root>
+// Usage: GilnunTests <guidance_fixtures.json> <SidewalkDetector.mlmodelc> <detector_golden.json> <repo root>
 // Run through run_tests.sh, which generates the fixtures and compiles the model.
 
 var checkCount = 0
@@ -18,7 +18,7 @@ func expect(_ condition: Bool, _ message: @autoclosure () -> String) {
 
 let arguments = CommandLine.arguments
 guard arguments.count == 5 else {
-    print("usage: GlassTests <guidance_fixtures.json> <model.mlmodelc> <detector_golden.json> <repo root>")
+    print("usage: GilnunTests <guidance_fixtures.json> <model.mlmodelc> <detector_golden.json> <repo root>")
     exit(2)
 }
 

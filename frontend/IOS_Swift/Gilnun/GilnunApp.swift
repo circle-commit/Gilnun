@@ -1,6 +1,6 @@
 //
-//  GlassApp.swift
-//  Glass
+//  GilnunApp.swift
+//  Gilnun
 //
 //  Created by JoMinHui on 4/10/26.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import UIKit
 
 @main
-struct GlassApp: App {
+struct GilnunApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {

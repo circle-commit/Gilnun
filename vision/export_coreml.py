@@ -17,7 +17,7 @@ from ultralytics import YOLO
 
 
 DEFAULT_WEIGHTS = Path("runs/detect/runs/sidewalk/yolov8n_sidewalk-3/weights/best.pt")
-DEFAULT_OUTPUT = Path("frontend/IOS_Swift/Glass/SidewalkDetector.mlpackage")
+DEFAULT_OUTPUT = Path("frontend/IOS_Swift/Gilnun/SidewalkDetector.mlpackage")
 
 # The app analyzes upright portrait frames (1080x1920). A 640x384 (height x width)
 # input is exactly what PyTorch rect inference uses for that aspect ratio at

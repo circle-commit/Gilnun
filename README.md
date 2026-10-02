@@ -1,6 +1,8 @@
-# KOJINGAPLA
+# 길눈 (Gilnun)
 
 **시각장애인을 위한 카메라 기반 보행 보조 어시스턴트**
+
+'길눈이 밝다'의 길눈처럼, 길을 잘 찾는 눈이 되어 주는 앱입니다. (이전 이름: KOJINGAPLA)
 
 스마트폰 카메라 영상을 실시간으로 분석하여 두 가지 방식으로 음성 안내를 제공하는 프로토타입입니다.
 
@@ -37,7 +39,7 @@ Android (서버 연동)
 ## 프로젝트 구조
 
 ```text
-KOJINGAPLA/
+Gilnun/
 ├── backend/                    # FastAPI 백엔드
 │   ├── main.py                 # API 진입점 (/analyze, /health, /health/ocr)
 │   ├── ocr_runtime.py          # OCR 실행 환경 설정
@@ -50,7 +52,7 @@ KOJINGAPLA/
 │   │   └── text_service.py             # PaddleOCR 문자 인식
 │   └── tests/                  # pytest 테스트
 ├── frontend/
-│   ├── IOS_Swift/Glass/        # SwiftUI iOS 앱 (온디바이스 Core ML 모델 포함)
+│   ├── IOS_Swift/Gilnun/       # SwiftUI iOS 앱 (온디바이스 Core ML 모델 포함)
 │   ├── IOS_Swift/Tests/        # iOS 로직·모델 검증 테스트 (run_tests.sh)
 │   └── Android/                # Kotlin(CameraX) Android 앱
 ├── vision/                     # YOLOv8n 학습/검증/추론 스크립트
@@ -108,7 +110,7 @@ python -m pip install -r ../requirements.txt
 ## 프론트엔드
 
 ### iOS (`frontend/IOS_Swift`)
-SwiftUI 기반 `Glass` 앱. 서버 없이 기기에서 동작합니다. Xcode에서 `Glass.xcodeproj`를 열고 실제 기기에서 실행합니다(시뮬레이터에는 카메라가 없습니다).
+SwiftUI로 만든 `길눈` 앱. 서버 없이 기기에서 동작합니다. Xcode에서 `Gilnun.xcodeproj`를 열고 실제 기기에서 실행합니다(시뮬레이터에는 카메라가 없습니다).
 
 - **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLOv8n, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
 - **문자 읽기**: `OCRFrameAnalyzer`가 Apple Vision으로 한국어·영어 문자를 인식하고, 화면이 안정되면 인식한 문장을 읽어 줍니다.
@@ -130,7 +132,7 @@ frontend/IOS_Swift/Tests/run_tests.sh
 이 테스트와 iOS 시뮬레이터 빌드는 PR마다 GitHub Actions(`.github/workflows/ios.yml`)에서도 자동으로 실행됩니다. `backend/services/guidance_message_service.py` 등 안내 로직을 바꿀 때는 Swift 코드도 함께 고치고 이 테스트를 실행하세요. 모델을 다시 학습했다면 `python frontend/IOS_Swift/Tests/make_detector_golden.py`로 기준 탐지 결과도 갱신합니다.
 
 ### Android (`frontend/Android`)
-iOS `Glass` 앱의 네이티브 Android 버전. CameraX로 카메라 프레임을 스트리밍하고, ML Kit 한국어 텍스트 인식으로 OCR 대상의 안정성을 로컬에서 판단한 뒤 백엔드 `/analyze`를 호출합니다. Android Studio에서 `frontend/Android`를 엽니다.
+iOS 앱의 네이티브 Android 버전입니다. iOS 버전이 완성되면 이를 기준으로 다시 이식할 예정이라, 그때까지는 이전 앱 이름(Glass)을 그대로 씁니다. CameraX로 카메라 프레임을 스트리밍하고, ML Kit 한국어 텍스트 인식으로 OCR 대상의 안정성을 로컬에서 판단한 뒤 백엔드 `/analyze`를 호출합니다. Android Studio에서 `frontend/Android`를 엽니다.
 
 > Android 앱의 `SERVER_URL`을 백엔드 주소에 맞게 수정해야 합니다. 카메라·진동 기능은 실제 기기에서만 동작합니다.
 

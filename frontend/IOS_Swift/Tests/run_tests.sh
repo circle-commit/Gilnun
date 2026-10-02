@@ -7,7 +7,7 @@ set -euo pipefail
 
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
-APP_DIR="$REPO_ROOT/frontend/IOS_Swift/Glass"
+APP_DIR="$REPO_ROOT/frontend/IOS_Swift/Gilnun"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -24,9 +24,9 @@ xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$TESTS_DIR/GuidanceTests.swift" \
     "$TESTS_DIR/DetectorTests.swift" \
     "$TESTS_DIR/main.swift" \
-    -o "$WORK_DIR/GlassTests"
+    -o "$WORK_DIR/GilnunTests"
 
-"$WORK_DIR/GlassTests" \
+"$WORK_DIR/GilnunTests" \
     "$WORK_DIR/guidance_fixtures.json" \
     "$WORK_DIR/SidewalkDetector.mlmodelc" \
     "$TESTS_DIR/detector_golden.json" \

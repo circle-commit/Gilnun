@@ -7,26 +7,26 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		67ED535E2F89085D000FF811 /* Glass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Glass.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		67ED535E2F89085D000FF811 /* Gilnun.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Gilnun.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		67ED536D2F8908AC000FF811 /* Exceptions for "Glass" folder in "Glass" target */ = {
+		67ED536D2F8908AC000FF811 /* Exceptions for "Gilnun" folder in "Gilnun" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 67ED535D2F89085D000FF811 /* Glass */;
+			target = 67ED535D2F89085D000FF811 /* Gilnun */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		67ED53602F89085D000FF811 /* Glass */ = {
+		67ED53602F89085D000FF811 /* Gilnun */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				67ED536D2F8908AC000FF811 /* Exceptions for "Glass" folder in "Glass" target */,
+				67ED536D2F8908AC000FF811 /* Exceptions for "Gilnun" folder in "Gilnun" target */,
 			);
-			path = Glass;
+			path = Gilnun;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -45,7 +45,7 @@
 		67ED53552F89085D000FF811 = {
 			isa = PBXGroup;
 			children = (
-				67ED53602F89085D000FF811 /* Glass */,
+				67ED53602F89085D000FF811 /* Gilnun */,
 				67ED535F2F89085D000FF811 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -53,7 +53,7 @@
 		67ED535F2F89085D000FF811 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				67ED535E2F89085D000FF811 /* Glass.app */,
+				67ED535E2F89085D000FF811 /* Gilnun.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -61,9 +61,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		67ED535D2F89085D000FF811 /* Glass */ = {
+		67ED535D2F89085D000FF811 /* Gilnun */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 67ED53692F89085E000FF811 /* Build configuration list for PBXNativeTarget "Glass" */;
+			buildConfigurationList = 67ED53692F89085E000FF811 /* Build configuration list for PBXNativeTarget "Gilnun" */;
 			buildPhases = (
 				67ED535A2F89085D000FF811 /* Sources */,
 				67ED535B2F89085D000FF811 /* Frameworks */,
@@ -74,13 +74,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				67ED53602F89085D000FF811 /* Glass */,
+				67ED53602F89085D000FF811 /* Gilnun */,
 			);
-			name = Glass;
+			name = Gilnun;
 			packageProductDependencies = (
 			);
-			productName = Glass;
-			productReference = 67ED535E2F89085D000FF811 /* Glass.app */;
+			productName = Gilnun;
+			productReference = 67ED535E2F89085D000FF811 /* Gilnun.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -98,7 +98,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 67ED53592F89085D000FF811 /* Build configuration list for PBXProject "Glass" */;
+			buildConfigurationList = 67ED53592F89085D000FF811 /* Build configuration list for PBXProject "Gilnun" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -112,7 +112,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				67ED535D2F89085D000FF811 /* Glass */,
+				67ED535D2F89085D000FF811 /* Gilnun */,
 			);
 		};
 /* End PBXProject section */
@@ -269,7 +269,8 @@
 				DEVELOPMENT_TEAM = UUB3A255RD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Glass/Info.plist;
+				INFOPLIST_FILE = Gilnun/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "길눈";
 				INFOPLIST_KEY_NSCameraUsageDescription = "실시간 탐지를 위해 카메라 권한이 필요합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -281,7 +282,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.minhui.Glass;
+				PRODUCT_BUNDLE_IDENTIFIER = com.minhui.Gilnun;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -303,7 +304,8 @@
 				DEVELOPMENT_TEAM = UUB3A255RD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Glass/Info.plist;
+				INFOPLIST_FILE = Gilnun/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "길눈";
 				INFOPLIST_KEY_NSCameraUsageDescription = "실시간 탐지를 위해 카메라 권한이 필요합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -315,7 +317,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.minhui.Glass;
+				PRODUCT_BUNDLE_IDENTIFIER = com.minhui.Gilnun;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -330,7 +332,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		67ED53592F89085D000FF811 /* Build configuration list for PBXProject "Glass" */ = {
+		67ED53592F89085D000FF811 /* Build configuration list for PBXProject "Gilnun" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				67ED53672F89085E000FF811 /* Debug */,
@@ -339,7 +341,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		67ED53692F89085E000FF811 /* Build configuration list for PBXNativeTarget "Glass" */ = {
+		67ED53692F89085E000FF811 /* Build configuration list for PBXNativeTarget "Gilnun" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				67ED536A2F89085E000FF811 /* Debug */,

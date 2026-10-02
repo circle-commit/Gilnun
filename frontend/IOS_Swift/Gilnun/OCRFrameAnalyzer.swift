@@ -21,7 +21,7 @@ struct OCRFrameAnalysis {
 }
 
 final class OCRFrameAnalyzer {
-    private let queue = DispatchQueue(label: "glass.ocr.frame-analyzer", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "gilnun.ocr.frame-analyzer", qos: .userInitiated)
     private let request = VNRecognizeTextRequest()
     private var previousLumaSample: [Double]?
     private var isAnalyzing = false

@@ -45,7 +45,7 @@ jobs:
       - name: Build app for iOS Simulator
         run: |
           xcodebuild build \
-            -project frontend/IOS_Swift/Glass.xcodeproj \
-            -scheme Glass \
+            -project frontend/IOS_Swift/Gilnun.xcodeproj \
+            -scheme Gilnun \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO
