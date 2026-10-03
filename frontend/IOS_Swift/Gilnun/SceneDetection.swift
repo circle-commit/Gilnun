@@ -101,6 +101,8 @@ nonisolated struct SceneDetection {
     let areaRatio: Double
     /// How low the box bottom sits in the frame (0...1); lower boxes are usually closer.
     let verticalRatio: Double
+    /// Distance measured by the LiDAR camera (iPhone Pro models), nil when unavailable.
+    var distanceMeters: Double?
     var approaching = false
     var growthRatio: Double?
     var frontDangerZone = false

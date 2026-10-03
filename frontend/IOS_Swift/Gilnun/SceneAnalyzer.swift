@@ -67,7 +67,13 @@ nonisolated final class SceneAnalyzer {
     /// - Parameters:
     ///   - rawDetections: Detector output in `frameSize` pixel coordinates.
     ///   - now: Monotonic timestamp in seconds.
-    func analyze(_ rawDetections: [RawDetection], frameSize: CGSize, now: TimeInterval) -> LiveSceneResult {
+    ///   - depth: LiDAR depth for the same frame, when the device has a LiDAR camera.
+    func analyze(
+        _ rawDetections: [RawDetection],
+        frameSize: CGSize,
+        now: TimeInterval,
+        depth: DepthMap? = nil
+    ) -> LiveSceneResult {
         let frameWidth = Double(frameSize.width)
         let frameHeight = Double(frameSize.height)
         let frameArea = max(1, frameWidth * frameHeight)
@@ -92,7 +98,8 @@ nonisolated final class SceneAnalyzer {
                 frameWidth: frameWidth,
                 position: HorizontalPosition(centerX: raw.bbox.centerX, frameWidth: frameWidth),
                 areaRatio: areaRatio,
-                verticalRatio: rounded(max(0, min(1, raw.bbox.y2 / max(1, frameHeight))), places: 4)
+                verticalRatio: rounded(max(0, min(1, raw.bbox.y2 / max(1, frameHeight))), places: 4),
+                distanceMeters: depth?.distance(to: raw.bbox, uprightFrameSize: frameSize)
             )
         }
 
