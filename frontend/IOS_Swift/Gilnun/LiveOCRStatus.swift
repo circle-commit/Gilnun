@@ -24,4 +24,6 @@ struct LiveGuidanceBox: Identifiable {
     let label: String
     /// "왼쪽", "정면" or "오른쪽".
     let positionLabel: String
+    /// LiDAR distance such as "2.1m", nil without a reading.
+    var distanceText: String?
 }

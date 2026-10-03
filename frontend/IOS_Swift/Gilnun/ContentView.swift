@@ -420,7 +420,7 @@ private struct BoundingBoxView: View {
             .strokeBorder(color, lineWidth: 4)
             .frame(width: frame.width, height: frame.height)
             .overlay(alignment: .topLeading) {
-                Text("\(box.label) · \(box.positionLabel)")
+                Text([box.label, box.positionLabel, box.distanceText].compactMap { $0 }.joined(separator: " · "))
                     .font(.footnote.bold())
                     .foregroundStyle(Color.black)
                     .padding(.horizontal, 10)
