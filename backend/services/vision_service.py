@@ -52,8 +52,16 @@ KOREAN_LABELS = {
     "movable_signage": "입간판",
     "potted_plant": "화분",
     "parking_meter": "주차 정산기",
-    "stop": "정지 표지",
+    "stop": "버스 정류장",
     "table": "테이블",
+    "barricade": "바리케이드",
+    "chair": "의자",
+    "fire_hydrant": "소화전",
+    "kiosk": "가판대",
+    "carrier": "카트",
+    "dog": "강아지",
+    "traffic_light_controller": "신호 제어함",
+    "power_controller": "전기 분전함",
 }
 
 

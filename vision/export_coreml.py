@@ -1,4 +1,4 @@
-"""Export the trained sidewalk YOLOv8n model to Core ML for the iOS app.
+"""Export the trained sidewalk YOLO model to Core ML for the iOS app.
 
 Run from the repository root on macOS (requires ultralytics and coremltools):
     python -m vision.export_coreml
@@ -16,7 +16,7 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-DEFAULT_WEIGHTS = Path("runs/detect/runs/sidewalk/yolov8n_sidewalk-3/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
 DEFAULT_OUTPUT = Path("frontend/IOS_Swift/Gilnun/SidewalkDetector.mlpackage")
 
 # The app analyzes upright portrait frames (1080x1920). A 640x384 (height x width)

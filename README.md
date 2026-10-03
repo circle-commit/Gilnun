@@ -9,7 +9,7 @@
 - **문자 읽기(OCR) 모드** — 표지판, 라벨, 문서, 메뉴 등 화면 속 글자를 읽어 음성으로 안내
 - **실시간 보행 안내(Live) 모드** — 전방의 장애물·차량·사람 등을 탐지하고 위치(왼쪽/정면/오른쪽)와 위험도를 분석해 음성으로 안내
 
-**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLOv8n(Core ML)으로 객체를 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱은 아직 카메라 프레임을 FastAPI 백엔드로 전송하며, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 음성 안내 문장을 생성합니다.
+**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLO11s(Core ML)로 물체 28종을 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱은 아직 카메라 프레임을 FastAPI 백엔드로 전송하며, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 음성 안내 문장을 생성합니다.
 
 ---
 
@@ -18,7 +18,7 @@
 ```
 iOS (온디바이스)
 ┌──────────────────────────────────────────────────────────┐
-│ 카메라 ─► Live: YOLOv8n (Core ML, 초당 약 5회) ─► 위치·위험도 분석 ─► 음성/햅틱 │
+│ 카메라 ─► Live: YOLO11s (Core ML, 초당 약 5회) ─► 위치·위험도 분석 ─► 음성/햅틱 │
 │        └► Text: Apple Vision 한국어 OCR ───────────────────► 음성/햅틱 │
 └──────────────────────────────────────────────────────────┘
 
@@ -55,7 +55,7 @@ Gilnun/
 │   ├── IOS_Swift/Gilnun/       # SwiftUI iOS 앱 (온디바이스 Core ML 모델 포함)
 │   ├── IOS_Swift/Tests/        # iOS 로직·모델 검증 테스트 (run_tests.sh)
 │   └── Android/                # Kotlin(CameraX) Android 앱
-├── vision/                     # YOLOv8n 학습/검증/추론 스크립트
+├── vision/                     # YOLO 학습/검증/추론 스크립트
 │   ├── train.py                # 모델 학습
 │   ├── validate.py             # 모델 검증
 │   ├── predict.py              # 추론 CLI + 백엔드용 Detector
@@ -65,7 +65,7 @@ Gilnun/
 │   └── convert_cvat_to_yolo.py # CVAT 어노테이션 → YOLO 포맷 변환
 ├── datasets/
 │   ├── 15.인도보행영상/바운딩박스/  # 원본 입력 이미지 + CVAT 어노테이션 (Bbox_0001/ ...)
-│   └── yolo_sidewalk/          # 변환된 YOLO 데이터셋 (data.yaml, images/train·val, 20개 클래스)
+│   └── yolo_sidewalk/          # 변환된 YOLO 데이터셋 (data.yaml, images/train·val·test, 28개 클래스)
 ├── runs/                       # 학습/검증/예측 결과물
 ├── docs/                       # 비전 파이프라인·데모 문서
 ├── test_images/                # 추론 테스트용 입력 샘플 이미지 (Bbox_*.jpg)
@@ -112,7 +112,7 @@ python -m pip install -r ../requirements.txt
 ### iOS (`frontend/IOS_Swift`)
 SwiftUI로 만든 `길눈` 앱. 서버 없이 기기에서 동작합니다. Xcode에서 `Gilnun.xcodeproj`를 열고 실제 기기에서 실행합니다(시뮬레이터에는 카메라가 없습니다).
 
-- **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLOv8n, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
+- **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLO11s, 28종, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
 - **문자 읽기**: `OCRFrameAnalyzer`가 Apple Vision으로 한국어·영어 문자를 인식하고, 화면이 안정되면 인식한 문장을 읽어 줍니다.
 - 그 밖에 중복 음성 억제, 음성 출력(`SpeechManager` — 더 위급한 안내만 말을 끊고 끼어듦), 햅틱 피드백(`HapticFeedbackManager`)을 포함합니다.
 - 무음 모드에서도 안내 음성이 나오고(다른 앱의 음악은 안내하는 동안만 작아지고, 팟캐스트는 잠시 멈춤), 앱을 쓰는 동안에는 화면이 자동으로 잠기지 않습니다.
@@ -141,16 +141,33 @@ iOS 앱의 네이티브 Android 버전입니다. iOS 버전이 완성되면 이�
 
 ---
 
-## 비전 파이프라인 (YOLOv8n)
+## 비전 파이프라인
 
-인도 보행 환경에 맞춘 20개 클래스를 탐지합니다: `person, car, truck, bus, bicycle, motorcycle, scooter, wheelchair, stroller, traffic_light, traffic_sign, pole, bollard, bench, tree_trunk, movable_signage, potted_plant, parking_meter, stop, table`.
+인도 보행 환경에 맞춘 28개 클래스를 탐지합니다: `person, car, truck, bus, bicycle, motorcycle, scooter, wheelchair, stroller, traffic_light, traffic_sign, pole, bollard, bench, tree_trunk, movable_signage, potted_plant, parking_meter, stop(버스 정류장), table, barricade, chair, fire_hydrant, kiosk, carrier, dog, traffic_light_controller, power_controller`.
+
+iOS 앱의 모델은 YOLO11s로, AI Hub 인도보행영상 전체(약 27만 장)로 학습했습니다. 처음 모델(YOLOv8n, 20종, 약 6만 7천 장)과 학습에 쓰지 않은 녹화(test 세트)에서 앱과 같은 조건(9:16 세로 화면, 화면의 1% 이상인 물체, 신뢰도 0.25)으로 비교한 결과입니다.
+
+| 클래스 | YOLOv8n 재현율 | YOLO11s 재현율 | YOLO11s 정밀도 |
+|---|---|---|---|
+| 기존 20종 전체 | 0.852 | **0.908** | 0.742 (이전 0.702) |
+| 전동 킥보드 | 0.000 | **0.800** | 0.727 |
+| 휠체어 | 0.000 | **0.978** | 0.822 |
+| 유모차 | 0.068 | **0.951** | 0.770 |
+| 사람 | 0.890 | 0.941 | 0.898 |
+| 새 8종 (바리케이드, 의자, 소화전 등) | — | 0.64~0.96 | 0.57~0.89 |
+
+다시 학습하는 절차(데이터 받기, GPU 서버 학습, 앱 반영)는 [`docs/retraining.md`](docs/retraining.md)에 정리되어 있습니다. Android 앱이 쓰는 백엔드는 아직 처음 모델(YOLOv8n)을 씁니다.
 
 ```bash
-# 학습
-python -m vision.train --data datasets/yolo_sidewalk/data.yaml
+# 학습 (기본값: YOLO11s, 40 에폭, 배치 128, 사용 가능한 GPU 자동 선택)
+python scripts/build_balanced_train_list.py   # 드문 클래스 보강 → data_balanced.yaml
+python -m vision.train --data datasets/yolo_sidewalk/data_balanced.yaml
 
-# 검증
-python -m vision.validate --weights runs/detect/runs/sidewalk/yolov8n_sidewalk-3/weights/best.pt
+# 검증 (Ultralytics mAP)
+python -m vision.validate --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
+
+# 앱 기준 평가: 9:16 세로 화면, 화면의 1% 이상인 물체, 신뢰도 0.25에서 클래스별 정밀도·재현율
+python -m vision.evaluate_app --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
 
 # 추론 (이미지 / 웹캠 + 접근 추적)
 # 입력 이미지는 test_images/ 폴더의 샘플(Bbox_*.jpg)을 사용하거나 직접 지정합니다.
@@ -180,8 +197,10 @@ CVAT로 어노테이션한 데이터를 YOLO 포맷으로 변환할 수 있습�
 python scripts/convert_cvat_to_yolo.py
 ```
 
-- **입력 이미지 위치**: `datasets/15.인도보행영상/바운딩박스/` — `Bbox_0001/`, `Bbox_0002/` … 폴더 아래에 원본 이미지와 CVAT 어노테이션이 함께 들어 있습니다.
-- **출력 위치**: `datasets/yolo_sidewalk/images/{train,val}` 및 `datasets/yolo_sidewalk/labels/{train,val}` — 변환된 이미지와 YOLO 라벨이 저장됩니다.
+- **입력 이미지 위치**: `datasets/15.인도보행영상/바운딩박스/` — `Bbox_0001/`, `Bbox_0002/` … 폴더 아래에 원본 이미지와 CVAT 어노테이션이 함께 들어 있습니다. `scripts/download_aihub.py`로 AI Hub에서 받습니다.
+- **출력 위치**: `datasets/yolo_sidewalk/images/{train,val,test}` 및 `datasets/yolo_sidewalk/labels/{train,val,test}` — 줄인 JPEG 이미지와 YOLO 라벨(28종)이 저장됩니다. test는 학습에서 통째로 뺀 녹화 묶음입니다.
+
+데이터 받기부터 GPU 서버 학습, 앱 반영까지의 전체 순서는 [docs/retraining.md](docs/retraining.md)에 있습니다.
 
 데이터셋 설정은 [`datasets/yolo_sidewalk/data.yaml`](datasets/yolo_sidewalk/data.yaml)에 정의되어 있습니다.
 
@@ -189,7 +208,7 @@ python scripts/convert_cvat_to_yolo.py
 
 ### 학습 데이터 예시
 
-데이터셋은 AI Hub **인도보행영상** 공개 데이터셋을 YOLO 포맷으로 변환한 것으로, **train 66,538장 / val 16,715장**, 20개 클래스로 구성됩니다. train/val 분할은 고정 시드로 수행되며 `datasets/yolo_sidewalk/split_manifest.json`에 기록됩니다.
+데이터셋은 AI Hub **인도보행영상** 공개 데이터셋을 YOLO 포맷으로 변환한 것입니다. 지금 모델은 녹화 2,480개 전체로 만든 **train 269,324장 / val 67,390장 / test 13,027장**, 28개 클래스로 학습했습니다. 처음 모델은 그중 `Bbox_0001`~`Bbox_0410`(train 66,538장 / val 16,715장), 20개 클래스로 학습했습니다. 분할은 고정 시드로 수행되며 `datasets/yolo_sidewalk/split_manifest.json`에 기록됩니다. 아래 예시 이미지는 처음 학습 때의 것입니다.
 
 #### 1. 학습 배치 시각화 (Ground Truth 박스 포함)
 
@@ -251,14 +270,15 @@ python scripts/convert_cvat_to_yolo.py
 ## 문서
 
 - [`docs/vision_pipeline.md`](docs/vision_pipeline.md) — YOLOv8n 비전 파이프라인 상세
+- [`docs/retraining.md`](docs/retraining.md) — GPU 서버에서 탐지 모델을 다시 학습하고 앱에 넣는 방법
 - [`docs/demo_presentation_summary.md`](docs/demo_presentation_summary.md) — 데모 발표 자료 요약(시스템 아키텍처, 모드별 UX, 학습 결과)
 
 ---
 
 ## 향후 개선 방향
 
-- YOLO 모델의 재현율(recall) 및 견고성 향상
+- 실제 아이폰 촬영 영상으로 탐지 성능 검증
 - 세션별 객체 추적으로 접근 경고 정교화
-- 깊이(depth) 기반 거리 추정 강화
+- LiDAR(아이폰 Pro) 기반 실제 거리 안내
 - 문자 감지·위험 경고·방향 안내용 햅틱 피드백 확장
 - Android 앱 온디바이스 전환(TFLite) 및 다국어 OCR 개선

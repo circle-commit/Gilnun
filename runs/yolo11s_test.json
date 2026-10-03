@@ -1,0 +1,212 @@
+{
+  "weights": "runs/sidewalk/yolo11s_sidewalk/weights/best.pt",
+  "split": "test",
+  "images": 13027,
+  "conf": 0.25,
+  "min_area": 0.01,
+  "classes": {
+    "person": {
+      "labels": 3506,
+      "tp": 3300,
+      "fp": 375,
+      "recall": 0.9412435824301197,
+      "precision": 0.8979591836734694
+    },
+    "car": {
+      "labels": 5616,
+      "tp": 5379,
+      "fp": 2754,
+      "recall": 0.9577991452991453,
+      "precision": 0.6613795647362597
+    },
+    "truck": {
+      "labels": 1446,
+      "tp": 1283,
+      "fp": 664,
+      "recall": 0.8872752420470262,
+      "precision": 0.6589625064201335
+    },
+    "bus": {
+      "labels": 394,
+      "tp": 347,
+      "fp": 194,
+      "recall": 0.8807106598984772,
+      "precision": 0.6414048059149723
+    },
+    "bicycle": {
+      "labels": 470,
+      "tp": 412,
+      "fp": 170,
+      "recall": 0.8765957446808511,
+      "precision": 0.7079037800687286
+    },
+    "motorcycle": {
+      "labels": 664,
+      "tp": 600,
+      "fp": 154,
+      "recall": 0.9036144578313253,
+      "precision": 0.7957559681697612
+    },
+    "scooter": {
+      "labels": 10,
+      "tp": 8,
+      "fp": 3,
+      "recall": 0.8,
+      "precision": 0.7272727272727273
+    },
+    "wheelchair": {
+      "labels": 90,
+      "tp": 88,
+      "fp": 19,
+      "recall": 0.9777777777777777,
+      "precision": 0.822429906542056
+    },
+    "stroller": {
+      "labels": 162,
+      "tp": 154,
+      "fp": 46,
+      "recall": 0.9506172839506173,
+      "precision": 0.77
+    },
+    "traffic_light": {
+      "labels": 147,
+      "tp": 108,
+      "fp": 22,
+      "recall": 0.7346938775510204,
+      "precision": 0.8307692307692308
+    },
+    "traffic_sign": {
+      "labels": 562,
+      "tp": 466,
+      "fp": 93,
+      "recall": 0.8291814946619217,
+      "precision": 0.8336314847942755
+    },
+    "pole": {
+      "labels": 6749,
+      "tp": 6035,
+      "fp": 2221,
+      "recall": 0.8942065491183879,
+      "precision": 0.7309835271317829
+    },
+    "bollard": {
+      "labels": 564,
+      "tp": 514,
+      "fp": 93,
+      "recall": 0.9113475177304965,
+      "precision": 0.8467874794069192
+    },
+    "bench": {
+      "labels": 138,
+      "tp": 89,
+      "fp": 52,
+      "recall": 0.644927536231884,
+      "precision": 0.6312056737588653
+    },
+    "tree_trunk": {
+      "labels": 5473,
+      "tp": 4967,
+      "fp": 1335,
+      "recall": 0.9075461355746391,
+      "precision": 0.7881624880990162
+    },
+    "movable_signage": {
+      "labels": 1090,
+      "tp": 928,
+      "fp": 340,
+      "recall": 0.8513761467889909,
+      "precision": 0.7318611987381703
+    },
+    "potted_plant": {
+      "labels": 386,
+      "tp": 271,
+      "fp": 141,
+      "recall": 0.7020725388601037,
+      "precision": 0.6577669902912622
+    },
+    "parking_meter": {
+      "labels": 0,
+      "tp": 0,
+      "fp": 0,
+      "recall": null,
+      "precision": null
+    },
+    "stop": {
+      "labels": 393,
+      "tp": 355,
+      "fp": 122,
+      "recall": 0.9033078880407125,
+      "precision": 0.7442348008385744
+    },
+    "table": {
+      "labels": 50,
+      "tp": 32,
+      "fp": 20,
+      "recall": 0.64,
+      "precision": 0.6153846153846154
+    },
+    "barricade": {
+      "labels": 136,
+      "tp": 87,
+      "fp": 46,
+      "recall": 0.6397058823529411,
+      "precision": 0.6541353383458647
+    },
+    "chair": {
+      "labels": 176,
+      "tp": 128,
+      "fp": 56,
+      "recall": 0.7272727272727273,
+      "precision": 0.6956521739130435
+    },
+    "fire_hydrant": {
+      "labels": 44,
+      "tp": 37,
+      "fp": 8,
+      "recall": 0.8409090909090909,
+      "precision": 0.8222222222222222
+    },
+    "kiosk": {
+      "labels": 170,
+      "tp": 128,
+      "fp": 60,
+      "recall": 0.7529411764705882,
+      "precision": 0.6808510638297872
+    },
+    "carrier": {
+      "labels": 96,
+      "tp": 71,
+      "fp": 48,
+      "recall": 0.7395833333333334,
+      "precision": 0.5966386554621849
+    },
+    "dog": {
+      "labels": 187,
+      "tp": 179,
+      "fp": 23,
+      "recall": 0.9572192513368984,
+      "precision": 0.8861386138613861
+    },
+    "traffic_light_controller": {
+      "labels": 129,
+      "tp": 99,
+      "fp": 75,
+      "recall": 0.7674418604651163,
+      "precision": 0.5689655172413793
+    },
+    "power_controller": {
+      "labels": 134,
+      "tp": 99,
+      "fp": 69,
+      "recall": 0.7388059701492538,
+      "precision": 0.5892857142857143
+    }
+  },
+  "overall": {
+    "labels": 28982,
+    "tp": 26164,
+    "fp": 9203,
+    "recall": 0.9027672348354151,
+    "precision": 0.7397856759125738
+  }
+}
