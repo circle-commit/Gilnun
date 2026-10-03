@@ -9,26 +9,30 @@ from typing import Any
 
 HIGHEST_RISK_LABELS = {"car", "truck", "bus"}
 HIGH_RISK_LABELS = {"motorcycle", "scooter", "bicycle"}
-MEDIUM_HIGH_RISK_LABELS = {"bollard", "pole", "movable_signage", "tree_trunk"}
-MEDIUM_RISK_LABELS = {"person", "wheelchair", "stroller"}
+MEDIUM_HIGH_RISK_LABELS = {"bollard", "pole", "movable_signage", "tree_trunk", "barricade", "fire_hydrant"}
+MEDIUM_RISK_LABELS = {"person", "wheelchair", "stroller", "carrier", "dog"}
 LOWER_RISK_LABELS = {"bench", "potted_plant", "traffic_sign", "traffic_light"}
 IMMEDIATE_SPEECH_LABELS = HIGHEST_RISK_LABELS | {"motorcycle", "scooter"}
 LOW_CONFIDENCE_SPEECH_LABELS = HIGHEST_RISK_LABELS | HIGH_RISK_LABELS | {"wheelchair", "stroller"}
 NOISY_SPEECH_LABELS = {"pole", "tree_trunk", "traffic_sign", "traffic_light", "movable_signage"}
-OBSTACLE_LABELS = MEDIUM_HIGH_RISK_LABELS | {
-    "bench",
-    "potted_plant",
+# Fixed objects without a risk set of their own. "stop" is a bus stop.
+OTHER_OBSTACLE_LABELS = {
     "parking_meter",
     "stop",
     "table",
+    "chair",
+    "kiosk",
+    "traffic_light_controller",
+    "power_controller",
 }
+OBSTACLE_LABELS = MEDIUM_HIGH_RISK_LABELS | {"bench", "potted_plant"} | OTHER_OBSTACLE_LABELS
 GUIDANCE_LABELS = (
     HIGHEST_RISK_LABELS
     | HIGH_RISK_LABELS
     | MEDIUM_HIGH_RISK_LABELS
     | MEDIUM_RISK_LABELS
     | LOWER_RISK_LABELS
-    | {"parking_meter", "stop", "table"}
+    | OTHER_OBSTACLE_LABELS
 )
 
 POSITION_KO = {
@@ -52,10 +56,10 @@ RISK_LEVEL_RANK = {
 
 OBJECT_GROUPS = {
     "vehicle": HIGHEST_RISK_LABELS,
-    "mobility": HIGH_RISK_LABELS | {"wheelchair", "stroller"},
+    "mobility": HIGH_RISK_LABELS | {"wheelchair", "stroller", "carrier", "dog"},
     "person": {"person"},
     "obstacle": OBSTACLE_LABELS | MEDIUM_HIGH_RISK_LABELS,
-    "traffic": {"traffic_sign", "traffic_light", "stop"},
+    "traffic": {"traffic_sign", "traffic_light"},
 }
 
 EVENT_RANK = {
@@ -106,8 +110,8 @@ GROUND_OBSTACLE_DISTANCE_LABELS = {
     "bench",
     "potted_plant",
     "parking_meter",
-    "stop",
     "table",
+    "fire_hydrant",
 }
 
 

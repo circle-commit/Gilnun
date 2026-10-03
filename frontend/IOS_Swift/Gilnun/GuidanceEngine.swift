@@ -24,24 +24,31 @@ nonisolated enum GuidanceRules {
 
     static let highestRiskLabels: Set<String> = ["car", "truck", "bus"]
     static let highRiskLabels: Set<String> = ["motorcycle", "scooter", "bicycle"]
-    static let mediumHighRiskLabels: Set<String> = ["bollard", "pole", "movable_signage", "tree_trunk"]
-    static let mediumRiskLabels: Set<String> = ["person", "wheelchair", "stroller"]
+    static let mediumHighRiskLabels: Set<String> = [
+        "bollard", "pole", "movable_signage", "tree_trunk", "barricade", "fire_hydrant",
+    ]
+    static let mediumRiskLabels: Set<String> = ["person", "wheelchair", "stroller", "carrier", "dog"]
     static let lowerRiskLabels: Set<String> = ["bench", "potted_plant", "traffic_sign", "traffic_light"]
     static let immediateSpeechLabels = highestRiskLabels.union(["motorcycle", "scooter"])
     static let lowConfidenceSpeechLabels = highestRiskLabels.union(highRiskLabels).union(["wheelchair", "stroller"])
     static let noisySpeechLabels: Set<String> = ["pole", "tree_trunk", "traffic_sign", "traffic_light", "movable_signage"]
-    static let obstacleLabels = mediumHighRiskLabels.union(["bench", "potted_plant", "parking_meter", "stop", "table"])
+    /// Fixed objects without a risk set of their own. "stop" is a bus stop.
+    static let otherObstacleLabels: Set<String> = [
+        "parking_meter", "stop", "table", "chair", "kiosk", "traffic_light_controller", "power_controller",
+    ]
+    static let obstacleLabels = mediumHighRiskLabels.union(["bench", "potted_plant"]).union(otherObstacleLabels)
+    static let mobilityLabels = highRiskLabels.union(["wheelchair", "stroller", "carrier", "dog"])
     static let guidanceLabels = highestRiskLabels
         .union(highRiskLabels)
         .union(mediumHighRiskLabels)
         .union(mediumRiskLabels)
         .union(lowerRiskLabels)
-        .union(["parking_meter", "stop", "table"])
+        .union(otherObstacleLabels)
 
     // Small ground obstacles can be close while their boxes are still small.
     static let groundObstacleDistanceLabels: Set<String> = [
         "bollard", "pole", "tree_trunk", "movable_signage", "bench",
-        "potted_plant", "parking_meter", "stop", "table",
+        "potted_plant", "parking_meter", "table", "fire_hydrant",
     ]
 
     static let defaultDistanceThresholds = DistanceThresholds(
@@ -83,7 +90,7 @@ nonisolated enum GuidanceRules {
         if highestRiskLabels.contains(label) {
             return .vehicle
         }
-        if highRiskLabels.contains(label) || label == "wheelchair" || label == "stroller" {
+        if mobilityLabels.contains(label) {
             return .mobility
         }
         if label == "person" {
@@ -92,7 +99,7 @@ nonisolated enum GuidanceRules {
         if obstacleLabels.contains(label) {
             return .obstacle
         }
-        if label == "traffic_sign" || label == "traffic_light" || label == "stop" {
+        if label == "traffic_sign" || label == "traffic_light" {
             return .traffic
         }
         return .obstacle
