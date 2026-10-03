@@ -17,7 +17,10 @@ nonisolated final class ObjectDetector {
 
     static let modelName = "SidewalkDetector"
 
-    let confidenceThreshold = 0.35
+    /// Lower than the backend's 0.35: for safety, recall matters more than precision, the
+    /// validation F1 peaks near 0.23, and low-confidence objects still need two consecutive
+    /// frames before they are announced (`GuidanceEventTracker`).
+    let confidenceThreshold = 0.25
     let iouThreshold = 0.5
     let maxDetections = 20
 
