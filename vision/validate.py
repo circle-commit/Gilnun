@@ -11,9 +11,11 @@ from pathlib import Path
 
 from ultralytics import YOLO
 
+from vision.device import default_device
+
 
 DEFAULT_DATA = Path("datasets/yolo_sidewalk/data.yaml")
-DEFAULT_WEIGHTS = Path("runs/detect/runs/sidewalk/yolov8n_sidewalk-3/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640, help="Validation image size.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold for metrics.")
     parser.add_argument("--iou", type=float, default=0.6, help="NMS IoU threshold.")
+    parser.add_argument("--device", default=None, help="'0', 'mps', or 'cpu'. Auto-detected by default.")
     return parser.parse_args()
 
 
@@ -41,7 +44,7 @@ def validate() -> None:
         imgsz=args.imgsz,
         conf=args.conf,
         iou=args.iou,
-        device="cpu",
+        device=args.device or default_device(),
         split="val",
         plots=True,
     )

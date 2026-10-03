@@ -6,6 +6,7 @@ Thumbs.db
 models/
 datasets/
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env

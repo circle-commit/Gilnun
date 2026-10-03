@@ -1,18 +1,50 @@
-from dataclasses import dataclass
-from pathlib import Path
+"""Convert the AI Hub 인도보행 영상 bounding-box data (CVAT XML) into a YOLO dataset.
+
+Images are resized and saved as JPEG while they are copied, so the dataset is small
+enough to upload to a GPU server: train and val images to --train-size on their long
+side (the training image size), test images to --test-size, because
+vision/evaluate_app.py crops the app's portrait view out of them.
+
+Splits:
+- test: recording folders after Bbox_0410 whose number is a multiple of 20, kept out of
+  training entirely. Frames of one recording look alike, so only recordings a model has
+  never seen show how it does on new scenes. The previous model was trained on
+  Bbox_0001-Bbox_0410 (83,253 images), so these are new to it as well.
+- train/val: every other image, split per image by the same seeded hash as before, so the
+  previous model's training images are in train and its validation images in val.
+
+Class ids 0-19 are the previous model's classes; the 8 classes after them were added.
+
+Run from the repository root after scripts/download_aihub.py (needs opencv-python,
+which ultralytics installs):
+    python scripts/convert_cvat_to_yolo.py
+"""
+
+from __future__ import annotations
+
+import argparse
 import json
 import logging
+import os
 import random
-import shutil
 import xml.etree.ElementTree as ET
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+
+import cv2
+import yaml
+
 
 SOURCE_DIR = Path("datasets/15.인도보행영상/바운딩박스")
 OUTPUT_DIR = Path("datasets/yolo_sidewalk")
-MANIFEST_PATH = OUTPUT_DIR / "split_manifest.json"
 
 VAL_RATIO = 0.2
 RANDOM_SEED = 42
-SPLITS = ("train", "val")
+SPLITS = ("train", "val", "test")
+PREVIOUS_MODEL_LAST_FOLDER = 410
+TEST_FOLDER_STEP = 20
 
 CLASSES = [
     "person",
@@ -35,6 +67,15 @@ CLASSES = [
     "parking_meter",
     "stop",
     "table",
+    # Added after the first model.
+    "barricade",
+    "chair",
+    "fire_hydrant",
+    "kiosk",
+    "carrier",
+    "dog",
+    "traffic_light_controller",
+    "power_controller",
 ]
 
 class_to_id = {name: i for i, name in enumerate(CLASSES)}
@@ -44,12 +85,20 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ImageItem:
     source_path: Path
-    output_filename: str
-    labels: list[str]
+    # Folder and file name, e.g. Bbox_0001_MP_SEL_000001.jpg. The split is derived from it.
+    key: str
+    labels: tuple[str, ...]
 
 
-def configure_logging():
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Convert the CVAT bounding-box data into a YOLO dataset.")
+    parser.add_argument("--source", type=Path, default=SOURCE_DIR, help="Folder with the Bbox_XXXX recordings.")
+    parser.add_argument("--output", type=Path, default=OUTPUT_DIR, help="YOLO dataset folder.")
+    parser.add_argument("--train-size", type=int, default=640, help="Long side of train and val images.")
+    parser.add_argument("--test-size", type=int, default=1280, help="Long side of test images.")
+    parser.add_argument("--quality", type=int, default=90, help="JPEG quality.")
+    parser.add_argument("--workers", type=int, default=os.cpu_count(), help="Parallel processes.")
+    return parser.parse_args()
 
 
 def convert_box(width, height, xtl, ytl, xbr, ybr):
@@ -60,210 +109,142 @@ def convert_box(width, height, xtl, ytl, xbr, ybr):
     return x_center, y_center, box_width, box_height
 
 
-def load_manifest():
-    if not MANIFEST_PATH.exists():
-        return {}
-
-    with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
-
-    return {
-        filename: split
-        for filename, split in manifest.get("splits", {}).items()
-        if split in SPLITS
-    }
+def folder_number(key: str) -> int:
+    return int(key.split("_")[1])
 
 
-def save_manifest(split_by_filename):
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "random_seed": RANDOM_SEED,
-        "val_ratio": VAL_RATIO,
-        "splits": dict(sorted(split_by_filename.items())),
-    }
-
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-
-def make_output_filename(image_path):
-    return f"{image_path.parent.name}_{image_path.name}"
-
-
-def label_filename(output_filename):
-    return f"{Path(output_filename).stem}.txt"
-
-
-def existing_split_for(output_filename):
-    label_name = label_filename(output_filename)
-    existing_splits = [
-        split
-        for split in SPLITS
-        if (OUTPUT_DIR / "labels" / split / label_name).exists()
-    ]
-
-    if len(existing_splits) > 1:
-        raise RuntimeError(
-            f"Label for {output_filename} exists in multiple splits: {existing_splits}"
-        )
-
-    return existing_splits[0] if existing_splits else None
-
-
-def deterministic_split(filename):
-    rng = random.Random(f"{RANDOM_SEED}:{filename}")
+def assign_split(key: str) -> str:
+    number = folder_number(key)
+    if number > PREVIOUS_MODEL_LAST_FOLDER and number % TEST_FOLDER_STEP == 0:
+        return "test"
+    rng = random.Random(f"{RANDOM_SEED}:{key}")
     return "val" if rng.random() < VAL_RATIO else "train"
 
 
-def collect_image_items():
-    image_items = []
-    seen_filenames = {}
-    found_count = 0
-    duplicate_count = 0
-
-    for xml_path in sorted(SOURCE_DIR.rglob("*.xml")):
-        folder = xml_path.parent
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
-
-        for image in root.findall("image"):
-            image_name = image.attrib["name"]
-            width = float(image.attrib["width"])
-            height = float(image.attrib["height"])
-
-            image_path = folder / image_name
-            if not image_path.exists():
-                logger.warning("image not found: %s", image_path)
-                continue
-
-            found_count += 1
-            output_filename = make_output_filename(image_path)
-            if output_filename in seen_filenames:
-                duplicate_count += 1
-                logger.warning(
-                    "duplicate image filename skipped: %s (first: %s, duplicate: %s)",
-                    output_filename,
-                    seen_filenames[output_filename],
-                    image_path,
-                )
-                continue
-            seen_filenames[output_filename] = image_path
-
-            labels = []
-
-            for box in image.findall("box"):
-                label = box.attrib["label"]
-
-                if label not in class_to_id:
-                    continue
-
-                xtl = float(box.attrib["xtl"])
-                ytl = float(box.attrib["ytl"])
-                xbr = float(box.attrib["xbr"])
-                ybr = float(box.attrib["ybr"])
-
-                x_center, y_center, box_width, box_height = convert_box(
-                    width, height, xtl, ytl, xbr, ybr
-                )
-
-                class_id = class_to_id[label]
-                labels.append(
-                    f"{class_id} {x_center:.6f} {y_center:.6f} {box_width:.6f} {box_height:.6f}"
-                )
-
-            image_items.append(ImageItem(image_path, output_filename, labels))
-
-    return image_items, found_count, duplicate_count
-
-
-def assign_splits(image_items):
-    existing_manifest = load_manifest()
-    split_by_filename = {}
-
-    for item in sorted(image_items, key=lambda item: item.output_filename):
-        filename = item.output_filename
-
-        existing_split = existing_split_for(filename)
-        split_by_filename[filename] = (
-            existing_manifest.get(filename)
-            or existing_manifest.get(item.source_path.name)
-            or existing_split
-            or deterministic_split(filename)
-        )
-
-    return split_by_filename
-
-
-def ensure_output_dirs():
-    for split_name in SPLITS:
-        (OUTPUT_DIR / "images" / split_name).mkdir(parents=True, exist_ok=True)
-        (OUTPUT_DIR / "labels" / split_name).mkdir(parents=True, exist_ok=True)
-
-
-def convert_items(image_items, split_by_filename):
-    skipped_count = 0
-    converted_count = 0
-    split_counts = {split: 0 for split in SPLITS}
-
-    for item in image_items:
-        split_name = split_by_filename[item.output_filename]
-        image_out_dir = OUTPUT_DIR / "images" / split_name
-        label_out_dir = OUTPUT_DIR / "labels" / split_name
-        out_image_path = image_out_dir / item.output_filename
-        out_label_path = label_out_dir / label_filename(item.output_filename)
-
-        split_counts[split_name] += 1
-
-        if out_label_path.exists():
-            skipped_count += 1
-            if not out_image_path.exists():
-                shutil.copy2(item.source_path, out_image_path)
+def read_annotations(xml_path: Path) -> list[ImageItem]:
+    items = []
+    folder = xml_path.parent
+    for image in ET.parse(xml_path).getroot().findall("image"):
+        image_path = folder / image.attrib["name"]
+        if not image_path.exists():
+            logger.warning("image not found: %s", image_path)
             continue
-
-        if not out_image_path.exists():
-            shutil.copy2(item.source_path, out_image_path)
-
-        with open(out_label_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(item.labels))
-            if item.labels:
-                f.write("\n")
-
-        converted_count += 1
-
-    return skipped_count, converted_count, split_counts
-
-
-def write_data_yaml():
-    data_yaml = OUTPUT_DIR / "data.yaml"
-    with open(data_yaml, "w", encoding="utf-8") as f:
-        f.write(f"path: {OUTPUT_DIR.resolve()}\n")
-        f.write("train: images/train\n")
-        f.write("val: images/val\n")
-        f.write("names:\n")
-        for i, name in enumerate(CLASSES):
-            f.write(f"  {i}: {name}\n")
+        width = float(image.attrib["width"])
+        height = float(image.attrib["height"])
+        labels = []
+        for box in image.findall("box"):
+            label = box.attrib["label"]
+            if label not in class_to_id:
+                continue
+            x_center, y_center, box_width, box_height = convert_box(
+                width,
+                height,
+                float(box.attrib["xtl"]),
+                float(box.attrib["ytl"]),
+                float(box.attrib["xbr"]),
+                float(box.attrib["ybr"]),
+            )
+            labels.append(f"{class_to_id[label]} {x_center:.6f} {y_center:.6f} {box_width:.6f} {box_height:.6f}")
+        items.append(ImageItem(image_path, f"{folder.name}_{image_path.name}", tuple(labels)))
+    return items
 
 
-def main():
-    configure_logging()
-    image_items, found_count, duplicate_count = collect_image_items()
-    ensure_output_dirs()
-    split_by_filename = assign_splits(image_items)
-    skipped_count, converted_count, split_counts = convert_items(
-        image_items, split_by_filename
-    )
-    save_manifest(split_by_filename)
-    write_data_yaml()
+def convert_item(item: ImageItem, split: str, output: Path, long_side: int, quality: int) -> bool:
+    """Write the resized JPEG and its label file. Returns False if the image could not be read."""
 
-    logger.info("Done.")
-    logger.info("Total images: %s", found_count)
-    logger.info("Skipped images: %s", skipped_count)
-    logger.info("Newly converted images: %s", converted_count)
-    logger.info("Duplicate filenames skipped: %s", duplicate_count)
-    logger.info("Train: %s", split_counts["train"])
-    logger.info("Val: %s", split_counts["val"])
-    logger.info("Output: %s", OUTPUT_DIR)
+    stem = Path(item.key).stem
+    label_path = output / "labels" / split / f"{stem}.txt"
+    label_path.write_text("".join(f"{line}\n" for line in item.labels), encoding="utf-8")
+
+    image_path = output / "images" / split / f"{stem}.jpg"
+    if image_path.exists():
+        return True
+    image = cv2.imread(str(item.source_path), cv2.IMREAD_COLOR)
+    if image is None:
+        label_path.unlink()
+        return False
+    height, width = image.shape[:2]
+    scale = long_side / max(width, height)
+    if scale < 1:
+        image = cv2.resize(image, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA)
+    encoded, data = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not encoded:
+        label_path.unlink()
+        return False
+    # A temporary name that is not an image, so an interrupted run never leaves a
+    # truncated image that training would pick up.
+    partial = image_path.with_name(image_path.name + ".tmp")
+    partial.write_bytes(data.tobytes())
+    partial.replace(image_path)
+    return True
+
+
+def convert_batch(batch: list[tuple[ImageItem, str]], output: Path, sizes: dict[str, int], quality: int) -> list[str]:
+    cv2.setNumThreads(1)  # One image per process; the pool provides the parallelism.
+    return [item.key for item, split in batch if not convert_item(item, split, output, sizes[split], quality)]
+
+
+def write_data_yaml(output: Path) -> None:
+    # No `path:` key: Ultralytics then resolves the splits relative to this file.
+    config = {
+        "train": "images/train",
+        "val": "images/val",
+        "test": "images/test",
+        "names": dict(enumerate(CLASSES)),
+    }
+    (output / "data.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    args = parse_args()
+
+    xml_paths = sorted(args.source.rglob("*.xml"))
+    with ProcessPoolExecutor(args.workers) as pool:
+        items = [item for items in pool.map(read_annotations, xml_paths, chunksize=8) for item in items]
+
+    seen = set()
+    unique_items = []
+    for item in items:
+        if item.key in seen:
+            logger.warning("duplicate image skipped: %s", item.source_path)
+            continue
+        seen.add(item.key)
+        unique_items.append(item)
+
+    split_by_key = {item.key: assign_split(item.key) for item in unique_items}
+    for split in SPLITS:
+        (args.output / "images" / split).mkdir(parents=True, exist_ok=True)
+        (args.output / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+    sizes = {"train": args.train_size, "val": args.train_size, "test": args.test_size}
+    work = [(item, split_by_key[item.key]) for item in unique_items]
+    batches = [work[i : i + 256] for i in range(0, len(work), 256)]
+    unreadable = []
+    with ProcessPoolExecutor(args.workers) as pool:
+        futures = [pool.submit(convert_batch, batch, args.output, sizes, args.quality) for batch in batches]
+        for done, future in enumerate(futures, start=1):
+            unreadable += future.result()
+            if done % 100 == 0 or done == len(futures):
+                logger.info("%d/%d images", min(done * 256, len(work)), len(work))
+    for key in unreadable:
+        logger.warning("unreadable image skipped: %s", key)
+        del split_by_key[key]
+
+    manifest = {"random_seed": RANDOM_SEED, "val_ratio": VAL_RATIO, "splits": dict(sorted(split_by_key.items()))}
+    (args.output / "split_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_data_yaml(args.output)
+
+    split_counts = Counter(split_by_key.values())
+    logger.info("Images: %s", ", ".join(f"{split} {split_counts[split]}" for split in SPLITS))
+    images_per_class = {split: Counter() for split in SPLITS}
+    for item in unique_items:
+        if item.key in split_by_key:
+            images_per_class[split_by_key[item.key]].update({int(line.split()[0]) for line in item.labels})
+    logger.info("%-26s%9s%9s%9s", "class (images)", *SPLITS)
+    for class_id, name in enumerate(CLASSES):
+        logger.info("%-26s%9d%9d%9d", f"{class_id} {name}", *(images_per_class[split][class_id] for split in SPLITS))
+    logger.info("Output: %s", args.output)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
-path: /home/world/KOJINGAPLA/datasets/yolo_sidewalk
 train: images/train
 val: images/val
+test: images/test
 names:
   0: person
   1: car
@@ -22,3 +22,11 @@ names:
   17: parking_meter
   18: stop
   19: table
+  20: barricade
+  21: chair
+  22: fire_hydrant
+  23: kiosk
+  24: carrier
+  25: dog
+  26: traffic_light_controller
+  27: power_controller
