@@ -8,6 +8,8 @@ nonisolated struct LiveSceneResult {
     let voiceUrgency: RiskLevel
     /// Detections sorted by guidance priority (riskiest first).
     let detections: [SceneDetection]
+    /// Anything solid in the walking path within reach, from LiDAR depth.
+    var closeObstacle: CloseObstacle?
 
     static let empty = LiveSceneResult(voiceGuide: "", voiceUrgency: .low, detections: [])
 }
@@ -54,6 +56,7 @@ nonisolated final class SceneAnalyzer {
 
     private let approachTracker = ApproachTracker(minGrowthRatio: 1.28)
     private let eventTracker: GuidanceEventTracker
+    private let obstacleTracker = CloseObstacleTracker()
 
     init(eventTracker: GuidanceEventTracker = GuidanceEventTracker()) {
         self.eventTracker = eventTracker
@@ -62,17 +65,21 @@ nonisolated final class SceneAnalyzer {
     func reset() {
         approachTracker.reset()
         eventTracker.reset()
+        obstacleTracker.reset()
     }
 
     /// - Parameters:
     ///   - rawDetections: Detector output in `frameSize` pixel coordinates.
     ///   - now: Monotonic timestamp in seconds.
     ///   - depth: LiDAR depth for the same frame, when the device has a LiDAR camera.
+    ///   - gravity: CoreMotion gravity in device coordinates, needed to find close
+    ///     obstacles in the depth.
     func analyze(
         _ rawDetections: [RawDetection],
         frameSize: CGSize,
         now: TimeInterval,
-        depth: DepthMap? = nil
+        depth: DepthMap? = nil,
+        gravity: (x: Double, y: Double, z: Double)? = nil
     ) -> LiveSceneResult {
         let frameWidth = Double(frameSize.width)
         let frameHeight = Double(frameSize.height)
@@ -110,14 +117,38 @@ nonisolated final class SceneAnalyzer {
         }
 
         let prioritized = GuidanceRules.enrichAndPrioritize(detections)
-        guard !prioritized.isEmpty else { return .empty }
 
-        let events = eventTracker.chooseEvents(prioritized, now: now, limit: 2)
+        var obstacle: CloseObstacle?
+        if let depth, let gravity {
+            obstacle = CloseObstacleDetector.find(in: depth, gravity: gravity)
+        }
+        // When the detector already sees it, its guidance names the object instead.
+        let unnamed = obstacle.flatMap { found in prioritized.contains { Self.detection($0, shows: found) } ? nil : found }
+        let warning = obstacleTracker.update(unnamed, now: now)
+
+        guard !prioritized.isEmpty || obstacle != nil else { return .empty }
+
+        // A spoken warning leaves room for one more sentence, so the speech stays short.
+        let events = prioritized.isEmpty ? [] : eventTracker.chooseEvents(prioritized, now: now, limit: warning == nil ? 2 : 1)
+        var sentences = events.map(\.message)
+        var urgency = events.map(\.detection.riskLevel).max() ?? .low
+        if let warning {
+            sentences.insert(CloseObstacleTracker.message(for: warning), at: 0)
+            urgency = max(urgency, warning.distance < 1.0 ? .critical : .high)
+        }
         return LiveSceneResult(
-            voiceGuide: events.map(\.message).joined(separator: " "),
-            voiceUrgency: events.map(\.detection.riskLevel).max() ?? .low,
-            detections: prioritized
+            voiceGuide: sentences.joined(separator: " "),
+            voiceUrgency: urgency,
+            detections: prioritized,
+            closeObstacle: obstacle
         )
+    }
+
+    /// A detection across the middle of the frame at about the obstacle's distance.
+    private static func detection(_ detection: SceneDetection, shows obstacle: CloseObstacle) -> Bool {
+        guard let meters = detection.distanceMeters, abs(meters - obstacle.distance) <= 0.4 else { return false }
+        let middle = detection.frameWidth / 2
+        return detection.position == .center || (detection.bbox.x1 <= middle && middle <= detection.bbox.x2)
     }
 
     private func rounded(_ value: Double, places: Int) -> Double {

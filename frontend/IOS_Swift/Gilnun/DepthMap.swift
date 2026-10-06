@@ -10,6 +10,8 @@ nonisolated struct DepthMap {
     let height: Int
     /// Row-major distances in meters; zero, negative or non-finite values mean no reading.
     let meters: [Float]
+    /// Needed to place points in 3D (`CloseObstacleDetector`); nil when unknown.
+    var intrinsics: DepthIntrinsics? = nil
 
     /// The iPhone LiDAR measures reliably up to about 5 m.
     static let maximumRange = 5.0
@@ -79,7 +81,10 @@ nonisolated struct DepthMap {
 extension DepthMap {
     /// Copies a LiDAR depth frame out of the capture buffer. Returns nil for relative
     /// (non-metric) depth, which cannot be spoken as meters.
-    nonisolated init?(depthData: AVDepthData) {
+    ///
+    /// - Parameter horizontalFieldOfView: The video format's field of view in degrees, used
+    ///   for the intrinsics when the depth data carries no camera calibration.
+    nonisolated init?(depthData: AVDepthData, horizontalFieldOfView: Double? = nil) {
         guard depthData.depthDataAccuracy == .absolute else { return nil }
 
         let depth = depthData.depthDataType == kCVPixelFormatType_DepthFloat32
@@ -101,5 +106,31 @@ extension DepthMap {
             }
         }
         self.init(width: width, height: height, meters: meters)
+        intrinsics = Self.intrinsics(of: depthData, width: width, height: height, horizontalFieldOfView: horizontalFieldOfView)
+    }
+
+    private nonisolated static func intrinsics(
+        of depthData: AVDepthData,
+        width: Int,
+        height: Int,
+        horizontalFieldOfView: Double?
+    ) -> DepthIntrinsics? {
+        if let calibration = depthData.cameraCalibrationData {
+            let matrix = calibration.intrinsicMatrix
+            let reference = calibration.intrinsicMatrixReferenceDimensions
+            guard reference.width > 0 else { return nil }
+            // The matrix refers to a larger frame; a 16:9 map is a centered crop of a 4:3 one.
+            let scale = Double(width) / Double(reference.width)
+            let cropTop = (Double(reference.height) * scale - Double(height)) / 2
+            return DepthIntrinsics(
+                fx: Double(matrix.columns.0.x) * scale,
+                fy: Double(matrix.columns.1.y) * scale,
+                cx: Double(matrix.columns.2.x) * scale,
+                cy: Double(matrix.columns.2.y) * scale - cropTop
+            )
+        }
+        guard let horizontalFieldOfView, horizontalFieldOfView > 0 else { return nil }
+        let focal = Double(width) / 2 / tan(horizontalFieldOfView * .pi / 360)
+        return DepthIntrinsics(fx: focal, fy: focal, cx: Double(width) / 2, cy: Double(height) / 2)
     }
 }

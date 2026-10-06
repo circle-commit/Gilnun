@@ -8,6 +8,7 @@
 import AVFoundation
 import Combine
 import CoreImage
+import CoreMotion
 import UIKit
 
 final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate,
@@ -41,6 +42,10 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     /// through `outputSynchronizer`. Other iPhones use the video output alone.
     private let depthOutput = AVCaptureDepthDataOutput()
     private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
+    /// The depth format's field of view, for depth frames without camera calibration.
+    private var depthFieldOfView: Double?
+    /// Gravity tells which depth points are ground and which stand in the path.
+    private let motionManager = CMMotionManager()
     private let videoQueue = DispatchQueue(label: "videoQueue")
     private let frameAnalyzer = OCRFrameAnalyzer()
     private let stabilityTracker = TextStabilityTracker()
@@ -166,6 +171,11 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [output, depthOutput])
             synchronizer.setDelegate(self, queue: videoQueue)
             outputSynchronizer = synchronizer
+            depthFieldOfView = Double(lidarFormats.video.videoFieldOfView)
+            if motionManager.isDeviceMotionAvailable {
+                motionManager.deviceMotionUpdateInterval = 0.1
+                motionManager.startDeviceMotionUpdates()
+            }
         } else {
             output.setSampleBufferDelegate(self, queue: videoQueue)
         }
@@ -265,14 +275,16 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             return
         }
 
-        let depth = depthData.flatMap { DepthMap(depthData: $0) }
+        let depth = depthData.flatMap { DepthMap(depthData: $0, horizontalFieldOfView: depthFieldOfView) }
+        let gravity = motionManager.deviceMotion.map { (x: $0.gravity.x, y: $0.gravity.y, z: $0.gravity.z) }
         if let depth, !loggedFirstDepthFrame {
             loggedFirstDepthFrame = true
             let center = BoundingBox(x1: frameSize.width * 0.4, y1: frameSize.height * 0.4, x2: frameSize.width * 0.6, y2: frameSize.height * 0.6)
             let centerDistance = depth.distance(to: center, uprightFrameSize: frameSize).map { "\($0) m" } ?? "no reading"
-            print("LiDAR first depth frame: \(depth.width)x\(depth.height), screen center \(centerDistance)")
+            let source = depthData?.cameraCalibrationData != nil ? "calibration" : "field of view"
+            print("LiDAR first depth frame: \(depth.width)x\(depth.height), screen center \(centerDistance), intrinsics from \(source): \(String(describing: depth.intrinsics)), gravity \(String(describing: gravity))")
         }
-        let result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now, depth: depth)
+        let result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now, depth: depth, gravity: gravity)
         publishLiveResult(result, frameSize: frameSize, now: now)
     }
 
@@ -302,7 +314,9 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let shouldClearGuide = !hasNewGuide && now - lastLiveGuideTime > liveGuideDisplayDuration
         let boxes = makeLiveBoxes(from: result.detections, imageSize: frameSize)
         let primaryDetection = result.detections.first
-        let riskScore = primaryDetection?.riskScore ?? 0
+        // A close obstacle shows as a warning (within 1.5 m) or danger (within 1 m).
+        let obstacleRisk = result.closeObstacle.map { $0.distance < 1.0 ? 90 : 70 } ?? 0
+        let riskScore = max(primaryDetection?.riskScore ?? 0, obstacleRisk)
         if riskScore >= displayedRiskScore || now - displayedRiskTime > riskDisplayHold {
             displayedRiskScore = riskScore
             displayedRiskTime = now

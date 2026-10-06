@@ -24,6 +24,7 @@ guard arguments.count == 5 else {
 
 runGuidanceUnitTests()
 runDepthTests()
+runObstacleTests()
 runGuidanceParityTests(fixturesURL: URL(fileURLWithPath: arguments[1]))
 runDetectorTests(
     modelURL: URL(fileURLWithPath: arguments[2]),
