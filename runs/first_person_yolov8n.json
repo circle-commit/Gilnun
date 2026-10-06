@@ -1,0 +1,114 @@
+{
+  "weights": "runs/detect/runs/sidewalk/yolov8n_sidewalk-3/weights/best.pt",
+  "split": "test",
+  "images": 14237,
+  "conf": 0.25,
+  "min_area": 0.01,
+  "classes": {
+    "person": {
+      "labels": 3141,
+      "tp": 2859,
+      "fp": 581,
+      "recall": 0.9102196752626552,
+      "precision": 0.8311046511627908
+    },
+    "car": {
+      "labels": 5615,
+      "tp": 5239,
+      "fp": 3862,
+      "recall": 0.9330365093499555,
+      "precision": 0.5756510273596308
+    },
+    "bicycle": {
+      "labels": 236,
+      "tp": 194,
+      "fp": 131,
+      "recall": 0.8220338983050848,
+      "precision": 0.5969230769230769
+    },
+    "motorcycle": {
+      "labels": 1027,
+      "tp": 922,
+      "fp": 166,
+      "recall": 0.8977604673807206,
+      "precision": 0.8474264705882353
+    },
+    "scooter": {
+      "labels": 53,
+      "tp": 0,
+      "fp": 0,
+      "recall": 0.0,
+      "precision": null
+    },
+    "stroller": {
+      "labels": 0,
+      "tp": 0,
+      "fp": 11,
+      "recall": null,
+      "precision": 0.0
+    },
+    "pole": {
+      "labels": 2705,
+      "tp": 2427,
+      "fp": 5499,
+      "recall": 0.8972273567467652,
+      "precision": 0.30620741862225587
+    },
+    "bollard": {
+      "labels": 596,
+      "tp": 517,
+      "fp": 262,
+      "recall": 0.8674496644295302,
+      "precision": 0.6636713735558408
+    },
+    "bench": {
+      "labels": 103,
+      "tp": 68,
+      "fp": 99,
+      "recall": 0.6601941747572816,
+      "precision": 0.40718562874251496
+    },
+    "tree_trunk": {
+      "labels": 1057,
+      "tp": 980,
+      "fp": 914,
+      "recall": 0.9271523178807947,
+      "precision": 0.5174234424498416
+    },
+    "movable_signage": {
+      "labels": 598,
+      "tp": 415,
+      "fp": 388,
+      "recall": 0.6939799331103679,
+      "precision": 0.5168119551681195
+    },
+    "potted_plant": {
+      "labels": 445,
+      "tp": 346,
+      "fp": 179,
+      "recall": 0.7775280898876404,
+      "precision": 0.659047619047619
+    },
+    "stop": {
+      "labels": 162,
+      "tp": 100,
+      "fp": 28,
+      "recall": 0.6172839506172839,
+      "precision": 0.78125
+    },
+    "table": {
+      "labels": 19,
+      "tp": 8,
+      "fp": 18,
+      "recall": 0.42105263157894735,
+      "precision": 0.3076923076923077
+    }
+  },
+  "overall": {
+    "labels": 15757,
+    "tp": 14075,
+    "fp": 12138,
+    "recall": 0.8932537919654756,
+    "precision": 0.5369473162171442
+  }
+}

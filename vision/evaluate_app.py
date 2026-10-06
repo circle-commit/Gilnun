@@ -11,6 +11,10 @@ of training; see scripts/convert_cvat_to_yolo.py):
 - objects that the 9:16 crop cuts to less than half of their box are not scored either
   way: a detection of the visible part is neither a hit nor a false alarm.
 Only classes the model knows are scored, so models with fewer classes compare fairly.
+Datasets that label only some classes can say so in their data.yaml: `scored` lists the
+classes to score, `merge` lists classes labeled as one (scored as the first), and boxes
+in ignore/<split>/ mark objects the dataset labels but this model has no class for;
+detections on them are not counted as false alarms (scripts/convert_first_person.py).
 
 Run from the repository root (use --out to save a report for comparing models):
     python -m vision.evaluate_app --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt --out yolo11s.json
@@ -21,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -112,6 +117,32 @@ def labels_in_view(
     return boxes, cut_off
 
 
+def scoring_rules(config: dict, known: set[int]) -> tuple[set[int], Callable[[int], int]]:
+    """Dataset classes to score, and the class each one is scored as.
+
+    `known` holds the dataset ids of the classes the model knows. A data.yaml can narrow
+    them with `scored` and have classes it labels as one scored together with `merge`.
+    """
+
+    data_id = {name: class_id for class_id, name in config["names"].items()}
+    scored = set(known)
+    if "scored" in config:
+        scored &= {data_id[name] for name in config["scored"] if name in data_id}
+    merged_into = {}
+    for group in config.get("merge", []):
+        members = [data_id[name] for name in group if name in data_id]
+        for class_id in members:
+            merged_into[class_id] = members[0]
+    return scored, lambda class_id: merged_into.get(class_id, class_id)
+
+
+def ignored_in_view(image_dir: Path, stem: str, width: int, height: int, rect: tuple[int, int, int, int]) -> list[tuple]:
+    """Boxes from ignore/<split>/: objects the dataset labels as kinds no class stands for."""
+
+    path = image_dir.parent.parent / "ignore" / image_dir.name / f"{stem}.txt"
+    return [box for boxes in labels_in_view(path, width, height, rect) for _, box in boxes]
+
+
 def main() -> None:
     args = parse_args()
     config = yaml.safe_load(args.data.read_text(encoding="utf-8"))
@@ -130,10 +161,10 @@ def main() -> None:
     # classes the model does not know are left out of the score.
     data_id = {name: class_id for class_id, name in names.items()}
     model_to_data = {model_id: data_id[name] for model_id, name in model.names.items() if name in data_id}
-    scored = set(model_to_data.values())
+    scored, unify = scoring_rules(config, set(model_to_data.values()))
     skipped = [names[class_id] for class_id in sorted(names) if class_id not in scored]
     if skipped:
-        print(f"Not scored (unknown to this model): {', '.join(skipped)}")
+        print(f"Not scored (unknown to this model or not labeled in this dataset): {', '.join(skipped)}")
     counts = defaultdict(lambda: {"labels": 0, "tp": 0, "fp": 0})
 
     for index, image_path in enumerate(images, start=1):
@@ -146,7 +177,9 @@ def main() -> None:
 
         label_path = val_dir.parent.parent / "labels" / val_dir.name / f"{image_path.stem}.txt"
         in_view, cut_off = labels_in_view(label_path, width, height, rect)
-        labels = [(cls, box) for cls, box in in_view if cls in scored and area(box) / view_area >= args.min_area]
+        labels = [(unify(cls), box) for cls, box in in_view if cls in scored and area(box) / view_area >= args.min_area]
+        cut_off = [(unify(cls), box) for cls, box in cut_off]
+        ignored = ignored_in_view(val_dir, image_path.stem, width, height, rect)
 
         result = model.predict(
             view,
@@ -158,9 +191,9 @@ def main() -> None:
             verbose=False,
         )[0]
         detections = [
-            (model_to_data[int(cls)], float(score), tuple(float(v) for v in xyxy))
+            (unify(model_to_data[int(cls)]), float(score), tuple(float(v) for v in xyxy))
             for cls, score, xyxy in zip(result.boxes.cls, result.boxes.conf, result.boxes.xyxy.tolist())
-            if int(cls) in model_to_data and area(tuple(xyxy)) / view_area >= args.min_area
+            if model_to_data.get(int(cls)) in scored and area(tuple(xyxy)) / view_area >= args.min_area
         ]
 
         # Greedy matching per class, most confident detections first.
@@ -172,7 +205,9 @@ def main() -> None:
                 if best is not None and iou(box, best) >= args.match_iou:
                     remaining.remove(best)
                     counts[cls]["tp"] += 1
-                elif not any(c == cls and iou(box, cut) >= args.match_iou for c, cut in cut_off):
+                elif not any(c == cls and iou(box, cut) >= args.match_iou for c, cut in cut_off) and not any(
+                    iou(box, other) >= args.match_iou for other in ignored
+                ):
                     counts[cls]["fp"] += 1
 
         if index % 500 == 0:
@@ -188,7 +223,7 @@ def main() -> None:
     }
     print(f"\n{'class':<16}{'labels':>8}{'recall':>9}{'precision':>11}")
     total = {"labels": 0, "tp": 0, "fp": 0}
-    for cls in sorted(scored):
+    for cls in sorted({unify(class_id) for class_id in scored}):
         c = counts[cls]
         recall = c["tp"] / c["labels"] if c["labels"] else None
         precision = c["tp"] / (c["tp"] + c["fp"]) if c["tp"] + c["fp"] else None
