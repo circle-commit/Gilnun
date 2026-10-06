@@ -18,6 +18,7 @@ xcrun coremlcompiler compile "$APP_DIR/SidewalkDetector.mlpackage" "$WORK_DIR" >
 xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$APP_DIR/SceneDetection.swift" \
     "$APP_DIR/DepthMap.swift" \
+    "$APP_DIR/CloseObstacle.swift" \
     "$APP_DIR/ApproachTracker.swift" \
     "$APP_DIR/GuidanceEngine.swift" \
     "$APP_DIR/SceneAnalyzer.swift" \
@@ -25,6 +26,7 @@ xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$TESTS_DIR/GuidanceTests.swift" \
     "$TESTS_DIR/DetectorTests.swift" \
     "$TESTS_DIR/DepthTests.swift" \
+    "$TESTS_DIR/ObstacleTests.swift" \
     "$TESTS_DIR/main.swift" \
     -o "$WORK_DIR/GilnunTests"
 
