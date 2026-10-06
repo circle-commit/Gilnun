@@ -13,4 +13,4 @@ __pycache__/
 .idea/
 .vscode/
 aihubshell
-runs/error_analysis/
+runs/error_analysis*/

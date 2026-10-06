@@ -8,6 +8,7 @@ running the model again. Then it reports, per class:
 - false alarms: on background, on an object of another class, or a duplicate box;
 the same scores by guidance group (classes the app warns about the same way), and saves
 crops of the most confident false alarms and of missed objects for inspection.
+A data.yaml's `scored`, `merge` and ignore/<split>/ boxes apply as in vision/evaluate_app.py.
 
 Run from the repository root:
     python -m vision.analyze_errors
@@ -32,8 +33,10 @@ from vision.evaluate_app import (
     APP_NMS_IOU,
     IMAGE_SUFFIXES,
     area,
+    ignored_in_view,
     iou,
     labels_in_view,
+    scoring_rules,
     view_rect,
 )
 
@@ -118,25 +121,38 @@ def load_cache(path: Path) -> dict:
     return cache
 
 
-def attach_labels(cache: dict) -> None:
-    """Adds each image's labels and cut-off objects, by the same rules as evaluate_app."""
+def attach_labels(cache: dict, config: dict) -> list[int]:
+    """Adds each image's labels, cut-off and ignored objects by the same rules as
+    evaluate_app, and keeps only detections of scored classes. Returns the classes scored.
+    """
 
     image_dir = Path(cache["image_dir"])
     label_dir = image_dir.parent.parent / "labels" / image_dir.name
+    scored, unify = scoring_rules(config, set(cache["names"]))
     for entry in cache["images"]:
         width, height = entry["size"]
         rect = view_rect(width, height, full_frame=False)
         view_area = rect[2] * rect[3]
-        in_view, cut_off = labels_in_view(label_dir / f"{Path(entry['image']).stem}.txt", width, height, rect)
-        entry["labels"] = [[cls, *box] for cls, box in in_view if area(box) / view_area >= APP_MIN_AREA]
-        entry["cut_off"] = [[cls, *box] for cls, box in cut_off]
+        stem = Path(entry["image"]).stem
+        in_view, cut_off = labels_in_view(label_dir / f"{stem}.txt", width, height, rect)
+        entry["labels"] = [
+            [unify(cls), *box] for cls, box in in_view if cls in scored and area(box) / view_area >= APP_MIN_AREA
+        ]
+        entry["cut_off"] = [[unify(cls), *box] for cls, box in cut_off]
+        entry["ignored"] = [list(box) for box in ignored_in_view(image_dir, stem, width, height, rect)]
+        entry["detections"] = [[unify(cls), *rest] for cls, *rest in entry["detections"] if cls in scored]
+    return sorted({unify(cls) for cls in scored})
 
 
-def is_cut_off(detection: list, entry: dict) -> bool:
-    """A detection of an object the view cuts off is neither a hit nor a false alarm."""
+def ignore_reason(detection: list, entry: dict) -> str | None:
+    """Why an unmatched detection is neither a hit nor a false alarm, if it is not."""
 
     cls, _, *box = detection
-    return any(c == cls and iou(tuple(box), tuple(cut)) >= MATCH_IOU for c, *cut in entry["cut_off"])
+    if any(c == cls and iou(tuple(box), tuple(cut)) >= MATCH_IOU for c, *cut in entry["cut_off"]):
+        return "ignored: cut off by the view"
+    if any(iou(tuple(box), tuple(other)) >= MATCH_IOU for other in entry["ignored"]):
+        return "ignored: a kind no class stands for"
+    return None
 
 
 # MARK: - Matching
@@ -184,7 +200,7 @@ def score(cache: dict, thresholds: dict[int, float] | None = None, key=lambda cl
             if conf is not None:
                 counts[key(cls)]["tp"] += 1
         for detection, is_match in zip(detections, matched):
-            if not is_match and not is_cut_off(detection, entry):
+            if not is_match and not ignore_reason(detection, entry):
                 counts[key(detection[0])]["fp"] += 1
     return counts
 
@@ -226,8 +242,9 @@ def breakdown(cache: dict, thresholds: dict[int, float] | None = None) -> tuple[
             if is_match:
                 continue
             cls, conf, *box = detection
-            if is_cut_off(detection, entry):
-                reasons[names[cls]]["ignored: cut off by the view"] += 1
+            ignored = ignore_reason(detection, entry)
+            if ignored:
+                reasons[names[cls]][ignored] += 1
                 continue
             overlaps = [(label[0], iou(tuple(box), tuple(label[1:]))) for label in labels]
             if any(label_cls == cls and overlap >= MATCH_IOU for label_cls, overlap in overlaps):
@@ -280,7 +297,7 @@ def main() -> None:
     else:
         cache = build_cache(args)
         cache_path.write_text(json.dumps(cache), encoding="utf-8")
-    attach_labels(cache)
+    classes = attach_labels(cache, yaml.safe_load(args.data.read_text(encoding="utf-8")))
     names = cache["names"]
     print(f"{len(cache['images'])} images, weights {cache['weights']}")
 
@@ -288,17 +305,18 @@ def main() -> None:
     by_group = score(cache, key=lambda cls: GROUP_OF.get(names[cls], names[cls]))
     reasons, false_alarms, misses = breakdown(cache)
 
+    fmt = lambda value: f"{value:.3f}" if value is not None else "-"
     print(f"\n{'class':<26}{'labels':>7}{'recall':>8}{'precision':>10}   top reasons")
-    for cls, name in names.items():
+    for cls in classes:
+        name = names[cls]
         recall, precision = rates(by_class[cls])
         top = ", ".join(f"{reason} {count}" for reason, count in reasons[name].most_common(3))
-        fmt = lambda value: f"{value:.3f}" if value is not None else "-"
         print(f"{name:<26}{by_class[cls]['labels']:>7}{fmt(recall):>8}{fmt(precision):>10}   {top}")
 
     print(f"\n{'guidance group':<26}{'labels':>7}{'recall':>8}{'precision':>10}")
     for group in GUIDANCE_GROUPS:
         recall, precision = rates(by_group[group])
-        print(f"{group:<26}{by_group[group]['labels']:>7}{recall:>8.3f}{precision:>10.3f}")
+        print(f"{group:<26}{by_group[group]['labels']:>7}{fmt(recall):>8}{fmt(precision):>10}")
 
     totals = Counter()
     for name_reasons in reasons.values():
@@ -322,7 +340,7 @@ def main() -> None:
         "weights": cache["weights"],
         "images": len(cache["images"]),
         "classes": {
-            names[cls]: {**by_class[cls], "reasons": dict(reasons[names[cls]])} for cls in names
+            names[cls]: {**by_class[cls], "reasons": dict(reasons[names[cls]])} for cls in classes
         },
         "groups": {group: dict(by_group[group]) for group in GUIDANCE_GROUPS},
     }
