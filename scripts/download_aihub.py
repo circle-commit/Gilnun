@@ -12,6 +12,10 @@ Run from the repository root. It asks for the AI Hub API key (or reads AIHUB_API
     python3 scripts/download_aihub.py --list    # files and sizes only
     python3 scripts/download_aihub.py
     python3 scripts/download_aihub.py --status  # progress, from another terminal
+Other datasets: pick files by the folders in their path, and unpack each file into its
+own folder under --out so files with the same name in different folders do not collide:
+    python3 scripts/download_aihub.py --dataset-key 159 --folder '' --path BBOX --path 라벨링 \
+        --keep-tree --out datasets/aihub
 """
 
 from __future__ import annotations
@@ -55,6 +59,7 @@ class RemoteFile:
     name: str
     folder: str
     size: int  # Approximate, from the rounded size in the file tree.
+    path: str = ""  # Folders from the dataset's root, joined with "/".
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,7 +71,18 @@ def parse_args() -> argparse.Namespace:
         help="Only files in this folder of the dataset's file tree. Pass '' for every file.",
     )
     parser.add_argument("--files", default=None, help="Comma-separated file keys to download (default: all in --folder).")
+    parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help="Only files whose folder path contains this text. Repeat to require several.",
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="Where the zip contents are extracted.")
+    parser.add_argument(
+        "--keep-tree",
+        action="store_true",
+        help="Unpack each file into <out>/<its folder path>/<file name> instead of straight into --out.",
+    )
     parser.add_argument("--work", type=Path, default=DEFAULT_WORK, help="Download and progress directory.")
     parser.add_argument("--list", action="store_true", help="Show the files and exit.")
     parser.add_argument(
@@ -85,16 +101,22 @@ def parse_tree(tree: str) -> list[RemoteFile]:
     """Files in a dataset's file tree, which lists them as `name | size | file key`."""
 
     files = []
-    folder = ""
+    # Open folders as (column of their branch mark, name); deeper entries start further right.
+    folders: list[tuple[int, str]] = []
     for line in tree.splitlines():
         match = TREE_LINE.search(line)
         if not match:
             continue
+        column = match.start()
+        while folders and folders[-1][0] >= column:
+            folders.pop()
         if match["key"]:
             size = int(float(match["size"]) * SIZE_UNITS[match["unit"]])
-            files.append(RemoteFile(match["key"], nfc(match["name"]), folder, size))
+            folder = folders[-1][1] if folders else ""
+            path = "/".join(name for _, name in folders)
+            files.append(RemoteFile(match["key"], nfc(match["name"]), folder, size, path))
         else:
-            folder = nfc(match["name"])
+            folders.append((column, nfc(match["name"])))
     return files
 
 
@@ -327,18 +349,20 @@ def fetch(remote: RemoteFile, args: argparse.Namespace, api_key: str) -> None:
         merged.touch()
         tar_path.unlink()
 
+    target = args.out / remote.path / Path(remote.name).stem if args.keep_tree else args.out
+    target.mkdir(parents=True, exist_ok=True)
     for item in sorted(state.iterdir()):
         if item.suffix.lower() == ".zip":
             print(f"Unzipping {item.name}...")
             try:
-                count = extract_zip(item, args.out)
+                count = extract_zip(item, target)
             except zipfile.BadZipFile as error:
                 shutil.rmtree(state)
                 raise SystemExit(f"{item.name} is corrupt ({error}); run the script again to download it again.")
             item.unlink()
-            print(f"{count} files in {args.out}")
+            print(f"{count} files in {target}")
         elif item.name not in {downloaded.name, merged.name}:
-            shutil.move(str(item), str(args.out / item.name))
+            shutil.move(str(item), str(target / item.name))
     shutil.rmtree(state)
 
 
@@ -447,6 +471,8 @@ def selected_files(args: argparse.Namespace) -> list[RemoteFile]:
     files = list_files(args.dataset_key)
     if args.folder:
         files = [remote for remote in files if remote.folder == nfc(args.folder)]
+    for part in args.path:
+        files = [remote for remote in files if nfc(part) in remote.path]
     if args.files:
         wanted = {key.strip() for key in args.files.split(",")}
         files = [remote for remote in files if remote.key in wanted]
