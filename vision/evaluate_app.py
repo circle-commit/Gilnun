@@ -7,7 +7,9 @@ of training; see scripts/convert_cvat_to_yolo.py):
 - each validation image is center-cropped to the app's 9:16 portrait view,
 - only boxes covering at least --min-area of that view count (labels and detections),
 - detections use the app's confidence threshold, and a detection matches a label of
-  the same class when their IoU is at least --match-iou.
+  the same class when their IoU is at least --match-iou;
+- objects that the 9:16 crop cuts to less than half of their box are not scored either
+  way: a detection of the visible part is neither a hit nor a false alarm.
 Only classes the model knows are scored, so models with fewer classes compare fairly.
 
 Run from the repository root (use --out to save a report for comparing models):
@@ -75,11 +77,18 @@ def iou(a: tuple[float, float, float, float], b: tuple[float, float, float, floa
     return inter / union if union > 0 else 0.0
 
 
-def labels_in_view(label_path: Path, width: int, height: int, rect: tuple[int, int, int, int]) -> list[tuple[int, tuple]]:
-    """Labels moved into view coordinates; boxes mostly outside the crop are dropped."""
+def labels_in_view(
+    label_path: Path, width: int, height: int, rect: tuple[int, int, int, int]
+) -> tuple[list[tuple[int, tuple]], list[tuple[int, tuple]]]:
+    """Labels moved into view coordinates, and the cut-off ones separately.
+
+    A box with less than half of it inside the crop is "cut off": too little of the
+    object shows to require a detection, but detecting it is not a false alarm.
+    """
 
     left, top, view_width, view_height = rect
     boxes = []
+    cut_off = []
     lines = label_path.read_text().splitlines() if label_path.exists() else []
     for line in lines:
         parts = line.split()
@@ -94,9 +103,13 @@ def labels_in_view(label_path: Path, width: int, height: int, rect: tuple[int, i
             min(full[2], left + view_width) - left,
             min(full[3], top + view_height) - top,
         )
-        if area(full) > 0 and area(clipped) / area(full) >= 0.5:
+        if area(full) <= 0 or area(clipped) <= 0:
+            continue
+        if area(clipped) / area(full) >= 0.5:
             boxes.append((cls, clipped))
-    return boxes
+        else:
+            cut_off.append((cls, clipped))
+    return boxes, cut_off
 
 
 def main() -> None:
@@ -132,11 +145,8 @@ def main() -> None:
         view_area = view_width * view_height
 
         label_path = val_dir.parent.parent / "labels" / val_dir.name / f"{image_path.stem}.txt"
-        labels = [
-            (cls, box)
-            for cls, box in labels_in_view(label_path, width, height, rect)
-            if cls in scored and area(box) / view_area >= args.min_area
-        ]
+        in_view, cut_off = labels_in_view(label_path, width, height, rect)
+        labels = [(cls, box) for cls, box in in_view if cls in scored and area(box) / view_area >= args.min_area]
 
         result = model.predict(
             view,
@@ -162,7 +172,7 @@ def main() -> None:
                 if best is not None and iou(box, best) >= args.match_iou:
                     remaining.remove(best)
                     counts[cls]["tp"] += 1
-                else:
+                elif not any(c == cls and iou(box, cut) >= args.match_iou for c, cut in cut_off):
                     counts[cls]["fp"] += 1
 
         if index % 500 == 0:
