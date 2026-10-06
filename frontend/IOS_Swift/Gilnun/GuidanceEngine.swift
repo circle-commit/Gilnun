@@ -122,8 +122,26 @@ nonisolated enum GuidanceRules {
         return .far
     }
 
+    /// Uses the LiDAR distance when there is one; otherwise estimates from the box like the backend.
     static func distanceLevel(of detection: SceneDetection) -> DistanceLevel {
-        distanceLevel(label: detection.label, areaRatio: detection.areaRatio, verticalRatio: detection.verticalRatio)
+        if let meters = detection.distanceMeters {
+            return distanceLevel(meters: meters)
+        }
+        return distanceLevel(label: detection.label, areaRatio: detection.areaRatio, verticalRatio: detection.verticalRatio)
+    }
+
+    /// At walking speed (about 1.2 m/s) these are roughly 1, 2 and 4 seconds away.
+    static func distanceLevel(meters: Double) -> DistanceLevel {
+        if meters < 1.2 {
+            return .veryClose
+        }
+        if meters < 2.5 {
+            return .close
+        }
+        if meters < 5.0 {
+            return .near
+        }
+        return .far
     }
 
     static func isFrontDangerZone(_ detection: SceneDetection) -> Bool {
@@ -315,7 +333,19 @@ nonisolated enum GuidanceRules {
     ) -> String {
         let context = messageContext(for: detection, eventType: eventType)
         let template = chooseWeightedTemplate(weightedTemplates(for: context), random: random)
-        return format(template, with: context)
+        let message = format(template, with: context)
+        guard let meters = detection.distanceMeters else { return message }
+        return "\(message) \(distancePhrase(meters: meters))"
+    }
+
+    /// Spoken LiDAR distance: half meters up close, whole meters farther away.
+    static func distancePhrase(meters: Double) -> String {
+        if meters < 1.0 {
+            return "1미터 안이에요."
+        }
+        let rounded = meters < 3.0 ? (meters * 2).rounded() / 2 : meters.rounded()
+        let number = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
+        return "약 \(number)미터 거리예요."
     }
 
     static func particle(for label: String) -> String {
@@ -503,6 +533,8 @@ nonisolated final class GuidanceEventTracker {
         var areaRatio: Double
         var approaching: Bool
         var seenCount: Int
+        /// LiDAR distance when this object was last announced.
+        var spokenDistanceMeters: Double?
     }
 
     /// The backend bucketed box centers every 192 px on 1080 px wide frames.
@@ -616,6 +648,12 @@ nonisolated final class GuidanceEventTracker {
             return GuidanceEvent(type: .riskIncreased, detection: detection, priority: 80 + max(levelDelta, 0) * 5)
         }
 
+        // With LiDAR, announce again once an object is a meter closer than last time and near.
+        if let meters = detection.distanceMeters, let spoken = state.spokenDistanceMeters,
+           spoken - meters >= 1.0, meters < 3.0, riskScore >= 35 {
+            return GuidanceEvent(type: .closer, detection: detection, priority: 72)
+        }
+
         if areaDelta >= 0.035 && riskScore >= 45 {
             return GuidanceEvent(type: .closer, detection: detection, priority: 72)
         }
@@ -636,7 +674,8 @@ nonisolated final class GuidanceEventTracker {
             position: detection.position,
             areaRatio: detection.areaRatio,
             approaching: detection.approaching,
-            seenCount: speechEligible ? previousSeenCount + 1 : previousSeenCount
+            seenCount: speechEligible ? previousSeenCount + 1 : previousSeenCount,
+            spokenDistanceMeters: previous?.spokenDistanceMeters
         )
     }
 
@@ -665,6 +704,7 @@ nonisolated final class GuidanceEventTracker {
 
     private func markSpoken(_ event: GuidanceEvent, now: TimeInterval) {
         states[objectKey(event.detection)]?.lastSpokenAt = now
+        states[objectKey(event.detection)]?.spokenDistanceMeters = event.detection.distanceMeters
         lastSituationAt[situationKey(event)] = now
         lastSignatureAt[speechSignature(event)] = now
         lastSpokenAt = now

@@ -113,6 +113,7 @@ python -m pip install -r ../requirements.txt
 SwiftUI로 만든 `길눈` 앱. 서버 없이 기기에서 동작합니다. Xcode에서 `Gilnun.xcodeproj`를 열고 실제 기기에서 실행합니다(시뮬레이터에는 카메라가 없습니다).
 
 - **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLO11s, 28종, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
+- **LiDAR 실제 거리 (iPhone 12 Pro 이후 Pro 모델)**: LiDAR 카메라가 영상과 함께 주는 깊이 지도에서 물체 상자 안쪽의 거리를 재서(`DepthMap`), 5m 안의 물체는 "약 2미터 거리예요"처럼 미터로 알려 주고 거리 단계도 실제 거리로 정합니다. 안내한 뒤 1m 이상 가까워지면(3m 안) 다시 알려 줍니다. LiDAR가 없는 iPhone이나 5m보다 먼 물체는 상자 크기와 위치로 추정합니다.
 - **문자 읽기**: `OCRFrameAnalyzer`가 Apple Vision으로 한국어·영어 문자를 인식하고, 화면이 안정되면 인식한 문장을 읽어 줍니다.
 - 그 밖에 중복 음성 억제, 음성 출력(`SpeechManager` — 더 위급한 안내만 말을 끊고 끼어듦), 햅틱 피드백(`HapticFeedbackManager`)을 포함합니다.
 - 무음 모드에서도 안내 음성이 나오고(다른 앱의 음악은 안내하는 동안만 작아지고, 팟캐스트는 잠시 멈춤), 앱을 쓰는 동안에는 화면이 자동으로 잠기지 않습니다.
@@ -183,7 +184,7 @@ CPU 추론은 `yolov8n`, `device="cpu"`, `imgsz=416`, `conf=0.35`, `iou=0.5`, `m
 
 - **위치 분석**: 바운딩 박스 중심을 기준으로 왼쪽/정면/오른쪽 구분
 - **위험도 점수화**: 객체 종류, 위치, 화면 점유 면적, 수직 위치, 신뢰도, 접근 여부로 0~100 점수 산출 → `low/medium/high/critical` 등급화
-- **거리 추정**: 객체 그룹별 임계값으로 `far/near/close/very_close` 단계 추정
+- **거리 추정**: 객체 그룹별 임계값으로 `far/near/close/very_close` 단계 추정 (iOS 앱은 LiDAR가 있으면 실제 거리로 1.2m·2.5m·5m 기준 적용)
 - **접근 추적**: 프레임 간 박스 크기 증가율로 다가오는 물체 감지
 - **음성 중복 억제**: 동일 상황의 반복 안내를 쿨다운으로 억제하고, 가중치 기반 템플릿으로 자연스러운 한국어 안내 문장 생성
 
@@ -279,6 +280,6 @@ python scripts/convert_cvat_to_yolo.py
 
 - 실제 아이폰 촬영 영상으로 탐지 성능 검증
 - 세션별 객체 추적으로 접근 경고 정교화
-- LiDAR(아이폰 Pro) 기반 실제 거리 안내
+- LiDAR 거리 변화로 다가오는 물체를 더 빨리 감지
 - 문자 감지·위험 경고·방향 안내용 햅틱 피드백 확장
 - Android 앱 온디바이스 전환(TFLite) 및 다국어 OCR 개선

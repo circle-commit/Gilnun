@@ -10,7 +10,8 @@ import Combine
 import CoreImage
 import UIKit
 
-final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate,
+    AVCaptureDataOutputSynchronizerDelegate {
     enum ProcessingMode: String {
         case liveAnalyzing = "live"
         case textDescription = "text"
@@ -36,6 +37,10 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private static let liveBoxMaxCount = 1
 
     private let output = AVCaptureVideoDataOutput()
+    /// LiDAR depth for each video frame on iPhone Pro models; frames arrive in pairs
+    /// through `outputSynchronizer`. Other iPhones use the video output alone.
+    private let depthOutput = AVCaptureDepthDataOutput()
+    private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
     private let videoQueue = DispatchQueue(label: "videoQueue")
     private let frameAnalyzer = OCRFrameAnalyzer()
     private let stabilityTracker = TextStabilityTracker()
@@ -51,6 +56,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private var objectDetector: ObjectDetector?
     private var objectDetectorFailed = false
     private var lastLiveAnalysisTime: TimeInterval = 0
+    private var loggedFirstDepthFrame = false
     private var lastLiveGuideTime: TimeInterval = 0
     /// About five detector runs per second: fast enough to track approaching objects.
     private let liveAnalysisInterval: TimeInterval = 0.2
@@ -137,8 +143,11 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     private func setupSession() {
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let input = try? AVCaptureDeviceInput(device: device) else { return }
+        // The LiDAR camera streams the same wide-camera video plus depth (iPhone 12 Pro and later Pro models).
+        let lidarCamera = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back)
+        let lidarFormats = lidarCamera.flatMap(Self.depthFormats)
+        let camera = lidarFormats != nil ? lidarCamera : AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        guard let device = camera, let input = try? AVCaptureDeviceInput(device: device) else { return }
 
         session.beginConfiguration()
         if session.canAddInput(input) {
@@ -149,9 +158,16 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         ]
-        output.setSampleBufferDelegate(self, queue: videoQueue)
         if session.canAddOutput(output) {
             session.addOutput(output)
+        }
+
+        if let lidarFormats, addDepthOutput(for: device, formats: lidarFormats) {
+            let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [output, depthOutput])
+            synchronizer.setDelegate(self, queue: videoQueue)
+            outputSynchronizer = synchronizer
+        } else {
+            output.setSampleBufferDelegate(self, queue: videoQueue)
         }
         session.commitConfiguration()
 
@@ -160,10 +176,69 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         }
     }
 
+    /// The LiDAR camera's 1920x1080 video format and its depth format. 1920x1080 is what the
+    /// wide camera streams by default, so detection and the preview see the same frames as
+    /// on iPhones without LiDAR.
+    private static func depthFormats(of device: AVCaptureDevice) -> (video: AVCaptureDevice.Format, depth: AVCaptureDevice.Format)? {
+        let format = device.formats.last { format in
+            let dimensions = format.formatDescription.dimensions
+            return dimensions.width == 1920 && dimensions.height == 1080
+                && format.formatDescription.mediaSubType.rawValue == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                && !format.isVideoBinned
+                && !format.supportedDepthDataFormats.isEmpty
+        }
+        let depthFormat = format?.supportedDepthDataFormats.last { depthFormat in
+            let type = depthFormat.formatDescription.mediaSubType.rawValue
+            return type == kCVPixelFormatType_DepthFloat16 || type == kCVPixelFormatType_DepthFloat32
+        }
+        guard let format, let depthFormat else { return nil }
+        return (format, depthFormat)
+    }
+
+    private func addDepthOutput(
+        for device: AVCaptureDevice,
+        formats: (video: AVCaptureDevice.Format, depth: AVCaptureDevice.Format)
+    ) -> Bool {
+        guard session.canAddOutput(depthOutput) else { return false }
+        let (format, depthFormat) = formats
+
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = format
+            device.activeDepthDataFormat = depthFormat
+            device.unlockForConfiguration()
+        } catch {
+            return false
+        }
+
+        // Filtering fills small holes in the LiDAR map, which keeps per-object readings stable.
+        depthOutput.isFilteringEnabled = true
+        depthOutput.alwaysDiscardsLateDepthData = true
+        session.addOutput(depthOutput)
+        let depthSize = depthFormat.formatDescription.dimensions
+        print("LiDAR depth on: \(depthSize.width)x\(depthSize.height) depth with 1920x1080 video")
+        return true
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        handleFrame(sampleBuffer, depthData: nil)
+    }
+
+    func dataOutputSynchronizer(
+        _ synchronizer: AVCaptureDataOutputSynchronizer,
+        didOutput synchronizedDataCollection: AVCaptureSynchronizedDataCollection
+    ) {
+        guard let video = synchronizedDataCollection.synchronizedData(for: output) as? AVCaptureSynchronizedSampleBufferData,
+              !video.sampleBufferWasDropped else { return }
+
+        let depth = synchronizedDataCollection.synchronizedData(for: depthOutput) as? AVCaptureSynchronizedDepthData
+        handleFrame(video.sampleBuffer, depthData: depth?.depthDataWasDropped == false ? depth?.depthData : nil)
+    }
+
+    private func handleFrame(_ sampleBuffer: CMSampleBuffer, depthData: AVDepthData?) {
         switch currentMode {
         case .liveAnalyzing:
-            analyzeLiveFrame(sampleBuffer)
+            analyzeLiveFrame(sampleBuffer, depthData: depthData)
         case .textDescription:
             analyzeTextFrame(sampleBuffer)
         }
@@ -171,7 +246,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
 
     // MARK: - Live guidance (on-device YOLO)
 
-    private func analyzeLiveFrame(_ sampleBuffer: CMSampleBuffer) {
+    private func analyzeLiveFrame(_ sampleBuffer: CMSampleBuffer, depthData: AVDepthData?) {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastLiveAnalysisTime >= liveAnalysisInterval else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -190,7 +265,14 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             return
         }
 
-        let result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now)
+        let depth = depthData.flatMap { DepthMap(depthData: $0) }
+        if let depth, !loggedFirstDepthFrame {
+            loggedFirstDepthFrame = true
+            let center = BoundingBox(x1: frameSize.width * 0.4, y1: frameSize.height * 0.4, x2: frameSize.width * 0.6, y2: frameSize.height * 0.6)
+            let centerDistance = depth.distance(to: center, uprightFrameSize: frameSize).map { "\($0) m" } ?? "no reading"
+            print("LiDAR first depth frame: \(depth.width)x\(depth.height), screen center \(centerDistance)")
+        }
+        let result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now, depth: depth)
         publishLiveResult(result, frameSize: frameSize, now: now)
     }
 
@@ -267,7 +349,8 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     rect: normalizedRect(for: detection.bbox, imageSize: imageSize),
                     riskScore: detection.riskScore,
                     label: detection.koreanLabel,
-                    positionLabel: detection.position.koreanName
+                    positionLabel: detection.position.koreanName,
+                    distanceText: detection.distanceMeters.map { String(format: "%.1fm", $0) }
                 )
             }
     }
