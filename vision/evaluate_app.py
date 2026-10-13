@@ -45,6 +45,7 @@ APP_CONFIDENCE = 0.25
 APP_NMS_IOU = 0.5
 APP_MAX_DETECTIONS = 20
 APP_MIN_AREA = 0.01
+APP_IMAGE_SIZE = 640  # the Core ML model's input
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", default="test", help="Split in data.yaml to evaluate.")
     parser.add_argument("--conf", type=float, default=APP_CONFIDENCE, help="Confidence threshold.")
     parser.add_argument("--min-area", type=float, default=APP_MIN_AREA, help="Smallest box, as a fraction of the view.")
+    parser.add_argument("--imgsz", type=int, default=APP_IMAGE_SIZE, help="Model input size (long side).")
     parser.add_argument("--match-iou", type=float, default=0.5, help="IoU needed for a detection to match a label.")
     parser.add_argument("--full-frame", action="store_true", help="Use the whole image instead of the portrait crop.")
     parser.add_argument("--limit", type=int, default=None, help="Evaluate only the first N images (quick check).")
@@ -183,7 +185,7 @@ def main() -> None:
 
         result = model.predict(
             view,
-            imgsz=640,
+            imgsz=args.imgsz,
             conf=args.conf,
             iou=APP_NMS_IOU,
             max_det=APP_MAX_DETECTIONS,
@@ -219,6 +221,7 @@ def main() -> None:
         "images": len(images),
         "conf": args.conf,
         "min_area": args.min_area,
+        "imgsz": args.imgsz,
         "classes": {},
     }
     print(f"\n{'class':<16}{'labels':>8}{'recall':>9}{'precision':>11}")
