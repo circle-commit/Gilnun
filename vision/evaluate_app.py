@@ -17,7 +17,7 @@ in ignore/<split>/ mark objects the dataset labels but this model has no class f
 detections on them are not counted as false alarms (scripts/convert_first_person.py).
 
 Run from the repository root (use --out to save a report for comparing models):
-    python -m vision.evaluate_app --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt --out yolo11s.json
+    python -m vision.evaluate_app --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt --out yolo11m.json
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from vision.device import default_device
 
 DEFAULT_DATA = Path("datasets/yolo_sidewalk/data.yaml")
 # The model in the app; pass --weights to score a new one against it.
-DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11m_sidewalk/weights/best.pt")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
 # Same settings as frontend/IOS_Swift/Gilnun/ObjectDetector.swift and SceneAnalyzer.swift.

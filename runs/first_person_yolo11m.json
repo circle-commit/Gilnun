@@ -1,0 +1,136 @@
+{
+  "weights": "runs/sidewalk/yolo11m_sidewalk/weights/best.pt",
+  "split": "test",
+  "images": 14237,
+  "conf": 0.25,
+  "min_area": 0.01,
+  "imgsz": 640,
+  "classes": {
+    "person": {
+      "labels": 3141,
+      "tp": 2925,
+      "fp": 736,
+      "recall": 0.9312320916905444,
+      "precision": 0.7989620322316306
+    },
+    "car": {
+      "labels": 5615,
+      "tp": 5245,
+      "fp": 3871,
+      "recall": 0.9341050756901158,
+      "precision": 0.5753620008775779
+    },
+    "bicycle": {
+      "labels": 236,
+      "tp": 195,
+      "fp": 54,
+      "recall": 0.826271186440678,
+      "precision": 0.7831325301204819
+    },
+    "motorcycle": {
+      "labels": 1027,
+      "tp": 972,
+      "fp": 145,
+      "recall": 0.9464459591041869,
+      "precision": 0.8701880035810206
+    },
+    "scooter": {
+      "labels": 53,
+      "tp": 41,
+      "fp": 31,
+      "recall": 0.7735849056603774,
+      "precision": 0.5694444444444444
+    },
+    "stroller": {
+      "labels": 0,
+      "tp": 0,
+      "fp": 48,
+      "recall": null,
+      "precision": 0.0
+    },
+    "pole": {
+      "labels": 2705,
+      "tp": 2597,
+      "fp": 5577,
+      "recall": 0.9600739371534196,
+      "precision": 0.31771470516271105
+    },
+    "bollard": {
+      "labels": 596,
+      "tp": 516,
+      "fp": 282,
+      "recall": 0.8657718120805369,
+      "precision": 0.6466165413533834
+    },
+    "bench": {
+      "labels": 103,
+      "tp": 75,
+      "fp": 54,
+      "recall": 0.7281553398058253,
+      "precision": 0.5813953488372093
+    },
+    "tree_trunk": {
+      "labels": 1057,
+      "tp": 1020,
+      "fp": 1052,
+      "recall": 0.9649952696310312,
+      "precision": 0.4922779922779923
+    },
+    "movable_signage": {
+      "labels": 598,
+      "tp": 454,
+      "fp": 505,
+      "recall": 0.7591973244147158,
+      "precision": 0.47340980187695514
+    },
+    "potted_plant": {
+      "labels": 445,
+      "tp": 391,
+      "fp": 190,
+      "recall": 0.8786516853932584,
+      "precision": 0.6729776247848537
+    },
+    "stop": {
+      "labels": 162,
+      "tp": 119,
+      "fp": 34,
+      "recall": 0.7345679012345679,
+      "precision": 0.7777777777777778
+    },
+    "table": {
+      "labels": 19,
+      "tp": 16,
+      "fp": 47,
+      "recall": 0.8421052631578947,
+      "precision": 0.25396825396825395
+    },
+    "barricade": {
+      "labels": 95,
+      "tp": 87,
+      "fp": 50,
+      "recall": 0.9157894736842105,
+      "precision": 0.635036496350365
+    },
+    "chair": {
+      "labels": 83,
+      "tp": 63,
+      "fp": 46,
+      "recall": 0.7590361445783133,
+      "precision": 0.5779816513761468
+    },
+    "carrier": {
+      "labels": 18,
+      "tp": 16,
+      "fp": 159,
+      "recall": 0.8888888888888888,
+      "precision": 0.09142857142857143
+    }
+  },
+  "overall": {
+    "labels": 15953,
+    "tp": 14732,
+    "fp": 12881,
+    "recall": 0.9234626715978186,
+    "precision": 0.5335168217868396
+  }
+}

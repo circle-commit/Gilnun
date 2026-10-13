@@ -6,7 +6,7 @@ it finds the same objects as the original PyTorch checkpoint.
 Run from the repository root (requires ultralytics):
     python frontend/IOS_Swift/Tests/make_detector_golden.py
 After retraining, pass the new checkpoint:
-    python frontend/IOS_Swift/Tests/make_detector_golden.py --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
+    python frontend/IOS_Swift/Tests/make_detector_golden.py --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from ultralytics import YOLO
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-WEIGHTS = REPO_ROOT / "runs/sidewalk/yolo11s_sidewalk/weights/best.pt"
+WEIGHTS = REPO_ROOT / "runs/sidewalk/yolo11m_sidewalk/weights/best.pt"
 IMAGES_DIR = REPO_ROOT / "test_images"
 OUTPUT = Path(__file__).resolve().parent / "detector_golden.json"
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11m_sidewalk/weights/best.pt")
 DEFAULT_OUTPUT = Path("frontend/IOS_Swift/Gilnun/SidewalkDetector.mlpackage")
 
 # The app analyzes upright portrait frames (1080x1920). A 640x384 (height x width)

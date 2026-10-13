@@ -38,7 +38,7 @@ from vision.device import default_device  # noqa: E402
 
 DEFAULT_DATASET = Path("datasets/yolo_sidewalk")
 DEFAULT_OUTPUT = Path("datasets/yolo_sidewalk_pl")
-DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11m_sidewalk/weights/best.pt")
 LIST_FILES = ("data_balanced.yaml", "train_balanced.txt", "val_subset.txt")
 
 # Rare classes the model is less sure about (test precision below 0.75 with few examples).

@@ -41,7 +41,7 @@ from vision.evaluate_app import (
 )
 
 
-DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11m_sidewalk/weights/best.pt")
 DEFAULT_DATA = Path("datasets/yolo_sidewalk/data.yaml")
 DEFAULT_OUT = Path("runs/error_analysis")
 MATCH_IOU = 0.5
