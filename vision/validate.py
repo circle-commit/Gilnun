@@ -15,7 +15,7 @@ from vision.device import default_device
 
 
 DEFAULT_DATA = Path("datasets/yolo_sidewalk/data.yaml")
-DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11s_sidewalk/weights/best.pt")
+DEFAULT_WEIGHTS = Path("runs/sidewalk/yolo11m_sidewalk/weights/best.pt")
 
 
 def parse_args() -> argparse.Namespace:

@@ -1,13 +1,13 @@
 # 탐지 모델 재학습
 
-데이터 준비와 평가는 Mac에서 하고, 시간 단위로 비용이 드는 GPU 서버에서는 학습만 합니다. 새 모델은 YOLO11s이고 28종을 탐지합니다. YOLO11은 지금 모델(YOLOv8n)과 출력 형식이 같아서, 앱 코드는 고치지 않고 모델 파일만 바꾸면 됩니다.
+데이터 준비와 평가는 Mac에서 하고, 시간 단위로 비용이 드는 GPU 서버에서는 학습만 합니다. 지금 앱의 모델은 YOLO11m이고 28종을 탐지합니다. 라벨에서 빠진 물체를 이전 모델(YOLO11s)로 채운 데이터로 학습했습니다. YOLO11은 크기와 관계없이 출력 형식이 같아서, 앱 코드는 고치지 않고 모델 파일만 바꾸면 됩니다.
 
 | 단계 | 어디서 | 걸리는 시간 |
 |---|---|---|
 | 1. 데이터 받기 | Mac | 약 6시간 (40MB/s 기준) |
-| 2. 학습용으로 변환 | Mac | 약 20분 |
+| 2. 학습용으로 변환 | Mac | 약 1시간 30분 |
 | 3. 기준선 측정 | Mac | 약 10분 |
-| 4. 학습 | GPU 서버 | 약 8시간 (A100 1장) |
+| 4. 학습 | GPU 서버 | 약 15시간 (A100 1장, YOLO11m) |
 | 5. 비교와 앱 반영 | Mac | 약 30분 |
 | 6. 다른 카메라 영상으로 확인 | Mac | 다운로드(약 40GB) 후 약 30분 |
 
@@ -15,8 +15,10 @@ Mac에서 쓰는 Python 환경은 한 번만 만들면 됩니다.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install ultralytics coremltools
+pip install "torch==2.7.0" "torchvision==0.22.0" "numpy<2.3" "coremltools==9.0" ultralytics opencv-python-headless
 ```
+
+> Core ML 변환 도구(coremltools 9.0)는 PyTorch 2.7까지만 검증되어 있고, numpy 2.3 이상에서는 변환 중 `only 0-dimensional arrays can be converted to Python scalars` 오류가 납니다. 그래서 버전을 고정합니다.
 
 ## 1. 데이터 받기 (Mac)
 
@@ -42,14 +44,18 @@ python scripts/convert_cvat_to_yolo.py
 # → datasets/yolo_sidewalk/data_balanced.yaml
 python scripts/build_balanced_train_list.py
 
+# 라벨에서 빠진 물체를 지금 모델로 채운 사본 → datasets/yolo_sidewalk_pl (약 1시간 10분)
+python scripts/pseudo_label.py
+
 # 서버에 올릴 파일 하나로 묶기 → datasets/sidewalk_train.tar
-python scripts/pack_training_data.py
+python scripts/pack_training_data.py --dataset datasets/yolo_sidewalk_pl
 ```
 
 - **분할**
   - **test:** `Bbox_0410` 이후 폴더 중 번호가 20의 배수인 녹화 묶음을 통째로 학습에서 뺍니다. 같은 녹화의 프레임은 서로 비슷해서, 모델이 한 번도 보지 못한 녹화로 재야 실제 성능에 가깝습니다. 예전 모델은 `Bbox_0001`~`Bbox_0410`(83,253장)으로 학습했기 때문에, 두 모델 모두에게 처음 보는 장면입니다.
   - **train/val:** 나머지 이미지를 예전과 같은 방식으로 나눕니다. 그래서 예전 모델의 학습 이미지는 train에, 검증 이미지는 val에 그대로 들어갑니다.
 - **이미지 크기:** train과 val은 긴 변 640(학습 크기), test는 긴 변 1280으로 줄입니다. 평가할 때 test 이미지에서 앱 화면 비율(9:16)만큼 잘라 쓰기 때문입니다.
+- **빠진 라벨 채우기:** 라벨에는 먼 기둥, 화면 가장자리의 차, 무리 속 사람처럼 잘 보이는 물체가 많이 빠져 있습니다. 그대로 학습하면 모델이 이런 물체를 배경으로 배웁니다. 그래서 지금 모델이 신뢰도 0.5 이상(드문 클래스는 0.7 이상)으로 찾았는데 라벨이 없는 물체를 라벨에 더합니다. test 세트에서 이런 물체를 신뢰도 0.5~0.7 구간에서 무작위로 뽑아 확인하니 약 92%가 실제 물체였습니다. 원본 라벨은 그대로 두고 사본에만 더하며, 이미지는 원본 폴더를 가리키는 링크로 씁니다.
 - **클래스:** 0~19번은 예전 모델과 같고, 20~27번(바리케이드, 의자, 소화전, 가판대, 카트, 강아지, 신호 제어함, 전기 분전함)을 새로 넣었습니다.
 
 ## 3. 지금 모델 성능 측정 (Mac)
@@ -79,7 +85,15 @@ python -m vision.evaluate_app --out baseline.json
 rsync -P -e "ssh -i ~/.ssh/elice.pem -p <포트>" datasets/sidewalk_train.tar elicer@<호스트>:~/
 ```
 
-엘리스 접속 경로(터널)를 거치면 연결 하나에 초당 6~13MB 정도라 21.5GB를 올리는 데 30분~1시간이 걸립니다. 끊기면 같은 명령을 다시 실행해 이어서 올립니다. 그동안에도 서버 요금이 나가므로, 서버 준비(아래 설치 명령)를 업로드와 동시에 해 두면 좋습니다.
+엘리스 접속 경로(터널)를 거치면 연결 하나에 초당 6~13MB 정도라 21.5GB를 올리는 데 30분~1시간이 걸립니다. 끊기면 같은 명령을 다시 실행해 이어서 올립니다. 파일을 나눠 여러 연결로 동시에 올리면 훨씬 빠릅니다(4개로 나눠 합계 초당 약 60MB, 약 6분 반).
+
+```bash
+mkdir -p datasets/upload_parts && split -b 5500m datasets/sidewalk_train.tar datasets/upload_parts/part_
+ssh -i ~/.ssh/elice.pem -p <포트> elicer@<호스트> 'mkdir -p ~/parts'
+for f in datasets/upload_parts/part_*; do rsync -P -e "ssh -i ~/.ssh/elice.pem -p <포트>" "$f" elicer@<호스트>:parts/ & done; wait
+```
+
+서버에서는 조각을 이어 붙이며 바로 풉니다: `cat ~/parts/part_* | tar -xf - -C ~/Gilnun/datasets/ && rm -rf ~/parts` 그동안에도 서버 요금이 나가므로, 서버 준비(아래 설치 명령)를 업로드와 동시에 해 두면 좋습니다.
 
 ### 학습 (서버)
 ```bash
@@ -90,14 +104,14 @@ pip install torch==2.14.1 torchvision --index-url https://download.pytorch.org/w
 pip install ultralytics==8.4.171
 pip uninstall -y opencv-python && pip install opencv-python-headless
 tar -xf ~/sidewalk_train.tar -C datasets/ && rm ~/sidewalk_train.tar
-setsid nohup python -m vision.train --data datasets/yolo_sidewalk/data_balanced.yaml > train.log 2>&1 < /dev/null &
+setsid nohup python -m vision.train --data datasets/yolo_sidewalk_pl/data_balanced.yaml > train.log 2>&1 < /dev/null &
 tail -f train.log
 ```
 
 - **PyTorch 버전:** 엘리스 서버의 GPU 드라이버(535)는 CUDA 12.2까지 지원합니다. 그래서 그냥 `pip install`로 받는 최신 PyTorch 대신 CUDA 12.6용 빌드를 먼저 설치합니다. 설치 뒤 `python -c "import torch; print(torch.cuda.is_available())"`가 `True`인지 확인합니다.
 - **OpenCV:** 서버에 화면용 라이브러리(libGL)가 없어서 일반 OpenCV는 불러올 때 오류가 납니다. 화면 기능을 뺀 headless 판으로 바꿉니다.
 
-- **기본값:** YOLO11s, 40 에폭, 배치 128, 이미지 크기 640입니다. A100 1장에서 한 에폭에 약 12분, 전체 약 8시간(약 2만 원)이 걸립니다. 배치를 키울수록 단계마다 생기는 고정 처리 시간이 줄어서, 초당 학습 이미지가 배치 32·64·128에서 312·397·499장이었습니다. 배치 128은 GPU 메모리를 약 31GB 쓰므로, 메모리가 작은 서버에서 부족하다는 오류가 나면 `--batch 64`나 `--batch 32`로 줄입니다.
+- **기본값:** YOLO11m, 40 에폭, 배치 128, 이미지 크기 640입니다. YOLO11m은 A100 1장에서 한 에폭에 약 22분(초당 약 260장), 전체 약 15시간이 걸리고 GPU 메모리를 약 60GB 씁니다. YOLO11s는 한 에폭에 약 12분, 전체 약 8시간이었습니다. 배치를 키울수록 단계마다 생기는 고정 처리 시간이 줄어서, YOLO11s의 초당 학습 이미지가 배치 32·64·128에서 312·397·499장이었습니다. GPU 메모리가 부족하다는 오류가 나면 `--batch 64`나 `--batch 32`로 줄입니다.
 - **조기 종료:** 15 에폭 동안 나아지지 않으면 학습이 자동으로 멈춥니다(`--patience`).
 - **비용 확인:** 학습이 시작되고 몇 분 뒤 진행 표시줄에 나오는 속도(it/s)로 전체 시간을 계산할 수 있습니다. 예상보다 비싸면 Ctrl+C로 멈추고 `--epochs`를 줄여 다시 시작합니다.
 - **접속이 끊겼다면:** 다시 접속해서 `tail -f ~/Gilnun/train.log`로 이어서 봅니다. `setsid nohup`으로 실행했기 때문에 학습은 계속됩니다. 브라우저의 VS Code 터미널에서도 같은 명령으로 볼 수 있습니다.
@@ -105,14 +119,14 @@ tail -f train.log
   ```bash
   setsid nohup python -m vision.train --resume >> train.log 2>&1 < /dev/null &
   ```
-- **크레딧:** 학습 전체(약 8~9시간)에 2만 원 남짓 듭니다. 시작하기 전에 그만큼 충전하거나 결제 수단을 등록해 둡니다.
+- **크레딧:** YOLO11m 학습 전체(약 15시간)에 약 4만 원이 듭니다. 시작하기 전에 그만큼 충전하거나 결제 수단을 등록해 둡니다.
 
 ### 결과 가져오기와 서버 삭제
-학습이 끝나면 `train.log` 마지막 줄에 결과 파일 위치가 나옵니다. 보통 `runs/sidewalk/yolo11s_sidewalk/weights/best.pt`입니다. Mac에서 결과 폴더를 통째로 가져옵니다.
+학습이 끝나면 `train.log` 마지막 줄에 결과 파일 위치가 나옵니다. 보통 `runs/sidewalk/yolo11m_sidewalk/weights/best.pt`입니다. Mac에서 결과 폴더를 통째로 가져옵니다.
 
 ```bash
 mkdir -p runs/sidewalk
-rsync -a -e "ssh -i ~/.ssh/elice.pem -p <포트>" elicer@<호스트>:Gilnun/runs/sidewalk/yolo11s_sidewalk runs/sidewalk/
+rsync -a -e "ssh -i ~/.ssh/elice.pem -p <포트>" elicer@<호스트>:Gilnun/runs/sidewalk/yolo11m_sidewalk runs/sidewalk/
 ```
 
 가져온 뒤에는 엘리스에서 인스턴스를 **중지한 다음 삭제**합니다. 중지만 하면 저장공간 요금이 계속 나갑니다.
@@ -120,16 +134,16 @@ rsync -a -e "ssh -i ~/.ssh/elice.pem -p <포트>" elicer@<호스트>:Gilnun/runs
 ## 5. 새 모델과 비교하고 앱에 넣기 (Mac)
 
 ```bash
-python -m vision.evaluate_app --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt --out yolo11s.json
+python -m vision.evaluate_app --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt --out yolo11m.json
 ```
 
-`baseline.json`과 `yolo11s.json`의 클래스별 재현율·정밀도를 비교합니다. 특히 전동 킥보드, 휠체어, 유모차, 차량을 봅니다. test 세트는 학습에 쓰지 않은 녹화 묶음이지만, 같은 데이터셋의 같은 카메라로 찍은 영상입니다. 실제 성능은 아이폰으로 새로 찍은 영상으로도 확인하세요.
+`baseline.json`과 `yolo11m.json`의 클래스별 재현율·정밀도를 비교합니다. 특히 전동 킥보드, 휠체어, 유모차, 차량을 봅니다. test 세트는 학습에 쓰지 않은 녹화 묶음이지만, 같은 데이터셋의 같은 카메라로 찍은 영상입니다. 실제 성능은 아이폰으로 새로 찍은 영상으로도 확인하세요.
 
 새 모델이 더 나으면 앱에 넣습니다. CoreML로 변환하고, 앱 탐지 코드와 PyTorch 결과를 비교하는 정답 데이터를 새 모델로 다시 만든 뒤 테스트합니다.
 
 ```bash
-python -m vision.export_coreml --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
-python frontend/IOS_Swift/Tests/make_detector_golden.py --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
+python -m vision.export_coreml --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt
+python frontend/IOS_Swift/Tests/make_detector_golden.py --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt
 frontend/IOS_Swift/Tests/run_tests.sh
 ```
 
@@ -156,6 +170,15 @@ python -m vision.evaluate_app --data datasets/first_person/data.yaml --out first
 
 ## 지난 학습 기록 (2026년 10월)
 
+### YOLO11m (빠진 라벨 채움, 지금 앱의 모델)
+- **서버:** 엘리스 G-NAHP-80(A100 1장), 40 에폭, 배치 128. 학습에 14시간 46분이 걸렸습니다(약 4만 원).
+- **빠진 라벨 채우기:** YOLO11s로 학습·검증 이미지 27.7만 장을 다시 보고, 그중 2.4만 장에 박스 26,524개를 더했습니다(기둥 7,038, 승용차 6,730, 나무 5,004, 입간판 1,772 등). 모델이 학습한 이미지라 라벨 없는 물체를 덜 찾는 편이어서, test 세트에서 본 비율보다 적게 더해졌습니다.
+- **결과 (test 세트, 앱 조건):** 28종 전체 재현율이 0.903에서 0.925로 올라 놓치는 물체가 약 4분의 1 줄었고, 정밀도는 0.814에서 0.803이 됐습니다. 기존 20종은 0.908→0.929(정밀도 0.817→0.805), 새 8종은 0.772→0.823(정밀도 0.742→0.753)입니다. 벤치(0.64→0.74), 탁자(0.64→0.76), 바리케이드, 의자, 화분, 입간판, 기둥처럼 약했던 클래스가 고르게 좋아졌습니다.
+- **정밀도:** 무작위로 뽑은 오탐 48개 중 라벨이 빠진 실제 물체가 YOLO11m은 약 86%, YOLO11s는 약 92%였습니다. 표본이 작아 단정할 수는 없지만, 실제로 잘못 본 경우가 조금 늘었을 수 있습니다(사람 뒷모습을 차로, 어두운 출입구를 트럭으로 본 경우 등).
+- **다른 카메라 (1인칭 시점 보행영상):** 재현율 0.923(YOLO11s 0.920)입니다.
+- **아이폰 16 Pro 처리 시간:** 한 장에 약 6ms(YOLO11s 약 2ms)라 실시간으로 충분합니다. Core ML 모델은 38MB입니다.
+
+### YOLO11s
 - **서버:** 엘리스 G-NAHP-80(A100 1장), 40 에폭, 배치 128. 학습에 약 8시간 반이 걸렸고, 업로드와 설정을 합쳐 약 2만 5천 원이 들었습니다. 중간에 크레딧이 떨어져 한 번 멈췄다가 `--resume`으로 이어서 학습했습니다.
 - **결과 (test 세트, 앱 조건):** 기존 20종의 재현율이 0.852에서 0.908로, 정밀도가 0.764에서 0.817로 올랐습니다. 처음에는 정밀도를 0.702→0.742로 기록했는데, 세로 화면에 잘린 물체를 오탐으로 센 평가 오류였습니다. 전동 킥보드는 0.00에서 0.80, 휠체어는 0.00에서 0.98, 유모차는 0.07에서 0.95가 됐습니다. 새로 넣은 8종의 재현율은 0.64(바리케이드)~0.96(강아지)입니다.
 - **약한 클래스:** 주차 정산기(학습 이미지 206장)는 거의 찾지 못하고, 카트와 두 제어함은 정밀도가 0.6 안팎입니다. 데이터를 더 모으거나 비슷한 클래스를 합치는 것을 다음 개선 후보로 둡니다.

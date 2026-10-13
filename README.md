@@ -9,7 +9,7 @@
 - **문자 읽기(OCR) 모드** — 표지판, 라벨, 문서, 메뉴 등 화면 속 글자를 읽어 음성으로 안내
 - **실시간 보행 안내(Live) 모드** — 전방의 장애물·차량·사람 등을 탐지하고 위치(왼쪽/정면/오른쪽)와 위험도를 분석해 음성으로 안내
 
-**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLO11s(Core ML)로 물체 28종을 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱은 아직 카메라 프레임을 FastAPI 백엔드로 전송하며, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 음성 안내 문장을 생성합니다.
+**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLO11m(Core ML)으로 물체 28종을 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱은 아직 카메라 프레임을 FastAPI 백엔드로 전송하며, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 음성 안내 문장을 생성합니다.
 
 ---
 
@@ -18,7 +18,7 @@
 ```
 iOS (온디바이스)
 ┌──────────────────────────────────────────────────────────┐
-│ 카메라 ─► Live: YOLO11s (Core ML, 초당 약 5회) ─► 위치·위험도 분석 ─► 음성/햅틱 │
+│ 카메라 ─► Live: YOLO11m (Core ML, 초당 약 5회) ─► 위치·위험도 분석 ─► 음성/햅틱 │
 │        └► Text: Apple Vision 한국어 OCR ───────────────────► 음성/햅틱 │
 └──────────────────────────────────────────────────────────┘
 
@@ -112,7 +112,7 @@ python -m pip install -r ../requirements.txt
 ### iOS (`frontend/IOS_Swift`)
 SwiftUI로 만든 `길눈` 앱. 서버 없이 기기에서 동작합니다. Xcode에서 `Gilnun.xcodeproj`를 열고 실제 기기에서 실행합니다(시뮬레이터에는 카메라가 없습니다).
 
-- **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLO11s, 28종, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
+- **실시간 보행 안내**: `ObjectDetector`가 번들된 `SidewalkDetector.mlpackage`(YOLO11m, 28종, 입력 640×384)를 초당 약 5회 실행하고, `SceneAnalyzer`가 접근 추적·위험도·거리 추정·안내 문장 생성을 수행합니다(`ApproachTracker`, `GuidanceEngine`).
 - **LiDAR 실제 거리 (iPhone 12 Pro 이후 Pro 모델)**: LiDAR 카메라가 영상과 함께 주는 깊이 지도에서 물체 상자 안쪽의 거리를 재서(`DepthMap`), 5m 안의 물체는 "약 2미터 거리예요"처럼 미터로 알려 주고 거리 단계도 실제 거리로 정합니다. 안내한 뒤 1m 이상 가까워지면(3m 안) 다시 알려 줍니다. LiDAR가 없는 iPhone이나 5m보다 먼 물체는 상자 크기와 위치로 추정합니다.
 - **가까운 장애물 경고 (LiDAR)**: 모델이 무엇인지 몰라도, 걸어가는 길(폭 약 70cm) 1.5m 안에 있는 단단한 물체를 깊이와 중력 방향으로 찾아 "바로 앞에 장애물이 있어요"처럼 알립니다(`CloseObstacleDetector`). 바닥과 낮은 턱은 빼고 발목부터 머리 높이까지 보므로, 흰 지팡이가 놓치는 튀어나온 간판이나 나뭇가지는 "머리 높이에 장애물"로 알립니다. 모델이 같은 물체를 이미 이름으로 안내하면 겹쳐 말하지 않습니다.
 - **문자 읽기**: `OCRFrameAnalyzer`가 Apple Vision으로 한국어·영어 문자를 인식하고, 화면이 안정되면 인식한 문장을 읽어 줍니다.
@@ -147,31 +147,32 @@ iOS 앱의 네이티브 Android 버전입니다. iOS 버전이 완성되면 이�
 
 인도 보행 환경에 맞춘 28개 클래스를 탐지합니다: `person, car, truck, bus, bicycle, motorcycle, scooter, wheelchair, stroller, traffic_light, traffic_sign, pole, bollard, bench, tree_trunk, movable_signage, potted_plant, parking_meter, stop(버스 정류장), table, barricade, chair, fire_hydrant, kiosk, carrier, dog, traffic_light_controller, power_controller`.
 
-iOS 앱의 모델은 YOLO11s로, AI Hub 인도보행영상 전체(약 27만 장)로 학습했습니다. 처음 모델(YOLOv8n, 20종, 약 6만 7천 장)과 학습에 쓰지 않은 녹화(test 세트)에서 앱과 같은 조건(9:16 세로 화면, 화면의 1% 이상인 물체, 신뢰도 0.25)으로 비교한 결과입니다. 세로 화면에 절반 넘게 잘린 물체는 점수에서 뺍니다.
+iOS 앱의 모델은 YOLO11m으로, AI Hub 인도보행영상 전체(약 27만 장)로 학습했습니다. 라벨에서 빠진 물체(먼 기둥, 화면 가장자리의 차 등 약 2만 6천 개)는 이전 모델(YOLO11s)이 찾은 것으로 채웠습니다. 처음 모델(YOLOv8n, 20종, 약 6만 7천 장)과 학습에 쓰지 않은 녹화(test 세트)에서 앱과 같은 조건(9:16 세로 화면, 화면의 1% 이상인 물체, 신뢰도 0.25)으로 비교한 결과입니다. 세로 화면에 절반 넘게 잘린 물체는 점수에서 뺍니다.
 
-| 클래스 | YOLOv8n 재현율 | YOLO11s 재현율 | YOLO11s 정밀도 |
-|---|---|---|---|
-| 기존 20종 전체 | 0.852 | **0.908** | 0.817 (이전 0.764) |
-| 전동 킥보드 | 0.000 | **0.800** | 0.727 |
-| 휠체어 | 0.000 | **0.978** | 0.946 |
-| 유모차 | 0.068 | **0.951** | 0.945 |
-| 사람 | 0.890 | 0.941 | 0.926 |
-| 새 8종 (바리케이드, 의자, 소화전 등) | — | 0.64~0.96 | 0.59~0.99 |
+| 클래스 | YOLOv8n 재현율 | YOLO11s 재현율 | YOLO11m 재현율 | YOLO11m 정밀도 (YOLO11s) |
+|---|---|---|---|---|
+| 기존 20종 전체 | 0.852 | 0.908 | **0.929** | 0.805 (0.817) |
+| 새 8종 전체 (바리케이드, 의자, 소화전 등) | — | 0.772 | **0.823** | 0.753 (0.742) |
+| 전동 킥보드 | 0.000 | 0.800 | **0.900** | 0.750 (0.727) |
+| 휠체어 | 0.000 | 0.978 | 0.978 | 0.967 (0.946) |
+| 유모차 | 0.068 | 0.951 | **0.975** | 0.913 (0.945) |
+| 사람 | 0.890 | 0.941 | **0.952** | 0.934 (0.926) |
 
-`python -m vision.analyze_errors`로 오류를 나눠 보면, 남은 오탐의 상당수는 데이터에 라벨이 빠진 실제 물체(특히 사람, 기둥, 나무)라서 실제 정밀도는 이보다 높습니다. 놓치는 물체는 화면의 1~3%인 작은(먼) 물체(재현율 0.87)와 화면을 40% 넘게 채우는 아주 가까운 물체(0.88)에 몰려 있습니다.
+`python -m vision.analyze_errors`로 오류를 나눠 보면, 남은 오탐의 상당수는 데이터에 라벨이 빠진 실제 물체(특히 사람, 기둥, 나무)라서 실제 정밀도는 이보다 높습니다. 무작위로 뽑은 오탐 48개 중 약 86%(YOLO11s는 약 92%)가 그런 물체였습니다. 놓치는 물체는 화면의 1~3%인 작은(먼) 물체(재현율 0.90, YOLO11s 0.87)와 화면을 40% 넘게 채우는 아주 가까운 물체(0.86)에 몰려 있고, 아주 가까운 물체는 LiDAR가 종류와 관계없이 경고합니다. 아이폰 16 Pro에서 한 장 처리에 약 6ms(YOLO11s 약 2ms)가 걸립니다.
 
 다시 학습하는 절차(데이터 받기, GPU 서버 학습, 앱 반영)는 [`docs/retraining.md`](docs/retraining.md)에 정리되어 있습니다. Android 앱이 쓰는 백엔드는 아직 처음 모델(YOLOv8n)을 씁니다.
 
 ```bash
-# 학습 (기본값: YOLO11s, 40 에폭, 배치 128, 사용 가능한 GPU 자동 선택)
+# 학습 (기본값: YOLO11m, 40 에폭, 배치 128, 사용 가능한 GPU 자동 선택)
 python scripts/build_balanced_train_list.py   # 드문 클래스 보강 → data_balanced.yaml
-python -m vision.train --data datasets/yolo_sidewalk/data_balanced.yaml
+python scripts/pseudo_label.py                # 라벨에서 빠진 물체 채우기 → datasets/yolo_sidewalk_pl
+python -m vision.train --data datasets/yolo_sidewalk_pl/data_balanced.yaml
 
 # 검증 (Ultralytics mAP)
-python -m vision.validate --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
+python -m vision.validate --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt
 
 # 앱 기준 평가: 9:16 세로 화면, 화면의 1% 이상인 물체, 신뢰도 0.25에서 클래스별 정밀도·재현율
-python -m vision.evaluate_app --weights runs/sidewalk/yolo11s_sidewalk/weights/best.pt
+python -m vision.evaluate_app --weights runs/sidewalk/yolo11m_sidewalk/weights/best.pt
 
 # 추론 (이미지 / 웹캠 + 접근 추적)
 # 입력 이미지는 test_images/ 폴더의 샘플(Bbox_*.jpg)을 사용하거나 직접 지정합니다.

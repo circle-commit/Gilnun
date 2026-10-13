@@ -1,7 +1,7 @@
 """Train the sidewalk object detector with Ultralytics.
 
 Run from the repository root, ideally on a CUDA GPU (see docs/retraining.md):
-    python -m vision.train --data datasets/yolo_sidewalk/data_balanced.yaml
+    python -m vision.train --data datasets/yolo_sidewalk_pl/data_balanced.yaml
 Continue an interrupted run from its last finished epoch, with the settings it started with:
     python -m vision.train --resume
 """
@@ -25,21 +25,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA, help="Path to YOLO data.yaml.")
     parser.add_argument(
         "--model",
-        default="yolo11s.pt",
+        default="yolo11m.pt",
         help="Base checkpoint. YOLO11 keeps the app's Core ML export (NMS pipeline) unchanged.",
     )
     # One epoch of the balanced list is about 350,000 images, so fewer epochs are needed
-    # than for a small dataset. 40 took about 8 hours on one A100.
+    # than for a small dataset. 40 took about 8 hours on one A100 with YOLO11s.
     parser.add_argument("--epochs", type=int, default=40, help="Training epochs.")
     parser.add_argument("--imgsz", type=int, default=640, help="Square training image size.")
     # Per-step overhead in the training loop dominates on an A100: batches of 32, 64 and
-    # 128 trained 312, 397 and 499 images per second. 128 needs about 31 GB of GPU memory.
+    # 128 trained 312, 397 and 499 images per second with YOLO11s, which needed about 31 GB
+    # of GPU memory at 128.
     parser.add_argument("--batch", type=int, default=128, help="Batch size. Lower this if the GPU runs out of memory.")
     parser.add_argument("--workers", type=int, default=16, help="Dataloader workers (capped at the CPU count).")
     parser.add_argument("--device", default=None, help="'0' for the first CUDA GPU, 'mps', or 'cpu'. Auto-detected by default.")
     parser.add_argument("--cache", choices=["ram", "disk"], default=None, help="Cache decoded images to speed up epochs.")
     parser.add_argument("--project", type=Path, default=DEFAULT_PROJECT, help="Output directory.")
-    parser.add_argument("--name", default="yolo11s_sidewalk", help="Run name under project.")
+    parser.add_argument("--name", default="yolo11m_sidewalk", help="Run name under project.")
     parser.add_argument("--patience", type=int, default=15, help="Early stopping patience.")
     parser.add_argument("--seed", type=int, default=42, help="Reproducibility seed.")
     parser.add_argument(
