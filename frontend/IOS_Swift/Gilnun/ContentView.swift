@@ -115,7 +115,7 @@ struct ContentView: View {
                 }
 
                 if mode == .ocr, let text = cam.latestDetectedText, !text.isEmpty {
-                    OcrCard(text: text)
+                    OcrCard(text: text, onRepeat: cam.repeatLastText)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
@@ -128,8 +128,10 @@ struct ContentView: View {
         }
         // Anyone who can't find the mode buttons can switch from anywhere on screen:
         // double tap without VoiceOver, two-finger double tap (Magic Tap) with VoiceOver.
+        // In text mode a single tap repeats the last text.
         .contentShape(Rectangle())
-        .gesture(TapGesture(count: 2).onEnded { toggleMode() })
+        .gesture(TapGesture(count: 2).onEnded { toggleMode() }
+            .exclusively(before: TapGesture().onEnded { if mode == .ocr { cam.repeatLastText() } }))
         .accessibilityAction(.magicTap) { toggleMode() }
         .preferredColorScheme(.dark)
         .animation(transition, value: severity)
@@ -263,6 +265,7 @@ private struct CardBackground: ViewModifier {
 // MARK: - OCR Card
 private struct OcrCard: View {
     let text: String
+    let onRepeat: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -278,6 +281,9 @@ private struct OcrCard: View {
         .padding(20)
         .glassSurface(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("두 번 탭하면 다시 읽어요.")
+        .accessibilityAction { onRepeat() }
     }
 }
 
@@ -460,7 +466,7 @@ private struct BoundingBoxView: View {
         GuidanceCard(message: "왼쪽에 벤치가 있어요.", severity: .calm)
         GuidanceCard(message: "정면에 기둥이 있어요. 천천히 이동해 주세요.", severity: .warning)
         GuidanceCard(message: "잠시 멈춰 주세요. 정면에 차량이 가까워요.", severity: .danger)
-        OcrCard(text: "비상구는 왼쪽에 있습니다")
+        OcrCard(text: "비상구는 왼쪽에 있습니다", onRepeat: {})
     }
     .padding()
     .background(Color.gray)

@@ -55,6 +55,14 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private var currentMode: ProcessingMode = .liveAnalyzing
     private var lastFullOCRRequestDate: Date = .distantPast
     private let fullOCRCooldown: TimeInterval = 3.0
+    private var videoDevice: AVCaptureDevice?
+    /// Frames this dark mean auto exposure has run out, so text mode lights the page.
+    private static let darkBrightness = 45.0
+    /// Consecutive dark text-mode frames; only touched by the OCR analyzer's callbacks.
+    private var darkFrameCount = 0
+    /// The first of two close reads; digits are spoken only when the next frame reads the same.
+    /// Only touched by the OCR analyzer's callbacks.
+    private var pendingDetail: (read: DetailRead, date: Date)?
 
     // Live mode runs entirely on the video queue; these are only touched there.
     private let sceneAnalyzer = SceneAnalyzer()
@@ -88,6 +96,8 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     func setMode(_ mode: ProcessingMode) {
         currentMode = mode
         stabilityTracker.reset()
+        // Text mode turns it back on if the page is still dark.
+        setTorch(.off)
         speechManager.clearPendingGuidance()
         videoQueue.async {
             self.sceneAnalyzer.reset()
@@ -113,7 +123,8 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             latestLiveRiskScore = 0
             liveBoxes = []
             hapticManager.updateOCRPulseState(.searching)
-            message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요." + modeSwitchHint(to: "실시간 안내")
+            message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요."
+                + modeSwitchHint(to: "실시간 안내", repeatHint: "화면을 한 번 누르면 읽은 문자를 다시 읽습니다.")
         }
 
         // Always announce the new mode: users who can't see the screen need to hear which one is on.
@@ -121,14 +132,16 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     /// Explains the switch gesture in the first few mode announcements, until it has likely been learned.
-    private func modeSwitchHint(to target: String) -> String {
+    private func modeSwitchHint(to target: String, repeatHint: String? = nil) -> String {
         let key = "modeSwitchHintCount"
         let count = UserDefaults.standard.integer(forKey: key)
         guard count < 3 else { return "" }
 
         UserDefaults.standard.set(count + 1, forKey: key)
         let gesture = UIAccessibility.isVoiceOverRunning ? "두 손가락으로 두 번 탭하면" : "화면을 두 번 누르면"
-        return " \(gesture) \(target)로 바뀝니다."
+        // VoiceOver users repeat from the text card, which VoiceOver describes itself.
+        let repeatPart = repeatHint.map { UIAccessibility.isVoiceOverRunning ? "" : " \($0)" } ?? ""
+        return " \(gesture) \(target)로 바뀝니다." + repeatPart
     }
 
     private func checkPermissions() {
@@ -153,6 +166,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let lidarFormats = lidarCamera.flatMap(Self.depthFormats)
         let camera = lidarFormats != nil ? lidarCamera : AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
         guard let device = camera, let input = try? AVCaptureDeviceInput(device: device) else { return }
+        videoDevice = device
 
         session.beginConfiguration()
         if session.canAddInput(input) {
@@ -388,8 +402,22 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         frameAnalyzer.analyze(sampleBuffer: sampleBuffer) { [weak self] analysis in
             guard let self else { return }
 
+            if let first = self.pendingDetail {
+                self.pendingDetail = nil
+                // A read left over from before a mode switch is stale.
+                if self.currentMode == .textDescription, analysis.timestamp.timeIntervalSince(first.date) < 1 {
+                    let second = self.frameAnalyzer.readDetail(analysis) ?? DetailRead(lines: [], missedLines: 0, droppedNumberLines: 0)
+                    self.speakDetail(first.read.confirmed(by: second))
+                    return
+                }
+            }
+
             let decision = self.stabilityTracker.update(with: analysis)
             self.updateLiveOCRStatus(decision.status)
+            if let hint = decision.hint {
+                self.speechManager.speakGuidance(hint.rawValue, urgency: .low)
+            }
+            self.lightUpIfDark(analysis)
 
             guard decision.shouldRunFullOCR else { return }
             guard self.currentMode == .textDescription else { return }
@@ -400,15 +428,61 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
 
             self.lastFullOCRRequestDate = Date()
             self.hapticManager.stopRepeatingPulses()
-            self.readText(analysis.readableText)
+            if let detail = self.frameAnalyzer.readDetail(analysis), !detail.lines.isEmpty || detail.droppedNumberLines > 0 {
+                self.pendingDetail = (detail, analysis.timestamp)
+            } else {
+                self.readText(analysis.readableText)
+            }
         }
     }
 
-    private func readText(_ detectedText: String) {
-        let voiceGuide = detectedText.isEmpty
-            ? "문자 읽기 모드입니다. 현재 화면에서 읽을 수 있는 문자를 찾지 못했습니다."
-            : "문자 읽기 모드입니다. 인식된 문자는 다음과 같습니다. \(detectedText)"
-        let shouldSpeak = !detectedText.isEmpty && duplicateSuppressor.shouldSpeak(detectedText)
+    // shortcut: the torch stays on until the mode changes, since a lit page always looks bright;
+    // turn it off by exposure (ISO) if users find it wasteful.
+    private func lightUpIfDark(_ analysis: OCRFrameAnalysis) {
+        darkFrameCount = analysis.brightness < Self.darkBrightness ? darkFrameCount + 1 : 0
+        guard darkFrameCount >= 5, currentMode == .textDescription,
+              let device = videoDevice, device.hasTorch, device.torchMode == .off else { return }
+
+        setTorch(.on)
+        speechManager.speakGuidance("어두워서 불을 켰어요.", urgency: .low)
+    }
+
+    private func setTorch(_ mode: AVCaptureDevice.TorchMode) {
+        guard let device = videoDevice, device.hasTorch, device.torchMode != mode,
+              (try? device.lockForConfiguration()) != nil else { return }
+        device.torchMode = mode
+        device.unlockForConfiguration()
+    }
+
+    /// Reads the last text again, even though it was already spoken.
+    func repeatLastText() {
+        guard currentMode == .textDescription else { return }
+        hapticManager.stopRepeatingPulses()
+        speechManager.speak(latestDetectedText.flatMap { $0.isEmpty ? nil : $0 } ?? "아직 읽은 문자가 없습니다.") { [weak self] in
+            guard let self, self.currentMode == .textDescription else { return }
+            self.hapticManager.updateOCRPulseState(.searching)
+        }
+    }
+
+    private func speakDetail(_ read: DetailRead) {
+        var notes: [String] = []
+        if read.droppedNumberLines > 0 {
+            notes.append(read.lines.isEmpty
+                ? "숫자가 있는 글자를 확실히 읽지 못했습니다. 휴대폰을 움직이지 말고 다시 비춰 주세요."
+                : "숫자가 확실하지 않은 줄은 빼고 읽었습니다.")
+        }
+        if read.missedLines > 0 {
+            notes.append("일부 글자는 읽지 못했습니다.")
+        }
+        readText(read.lines.joined(separator: " "), notes: notes.joined(separator: " "))
+    }
+
+    private func readText(_ detectedText: String, notes: String = "") {
+        // Only the text itself: the mode was announced when it started.
+        let voiceGuide = detectedText.isEmpty && notes.isEmpty
+            ? "현재 화면에서 읽을 수 있는 문자를 찾지 못했습니다."
+            : [detectedText, notes].filter { !$0.isEmpty }.joined(separator: " ")
+        let shouldSpeak = detectedText.isEmpty ? !notes.isEmpty : duplicateSuppressor.shouldSpeak(detectedText)
 
         if shouldSpeak {
             hapticManager.stopRepeatingPulses()

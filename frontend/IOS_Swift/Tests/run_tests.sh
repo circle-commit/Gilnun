@@ -23,10 +23,15 @@ xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$APP_DIR/GuidanceEngine.swift" \
     "$APP_DIR/SceneAnalyzer.swift" \
     "$APP_DIR/ObjectDetector.swift" \
+    "$APP_DIR/LiveOCRStatus.swift" \
+    "$APP_DIR/OCRFrameAnalyzer.swift" \
+    "$APP_DIR/TextStabilityTracker.swift" \
+    "$APP_DIR/DuplicateTextSuppressor.swift" \
     "$TESTS_DIR/GuidanceTests.swift" \
     "$TESTS_DIR/DetectorTests.swift" \
     "$TESTS_DIR/DepthTests.swift" \
     "$TESTS_DIR/ObstacleTests.swift" \
+    "$TESTS_DIR/TextAimingTests.swift" \
     "$TESTS_DIR/main.swift" \
     -o "$WORK_DIR/GilnunTests"
 
