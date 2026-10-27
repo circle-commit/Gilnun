@@ -49,18 +49,31 @@ private enum Severity {
     var icon: String {
         switch self {
         case .calm:    return "info.circle.fill"
-        case .warning: return "exclamationmark.circle.fill"
-        case .danger:  return "exclamationmark.triangle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .danger:  return "exclamationmark.octagon.fill"
         }
     }
 
     /// System colors, so "Increase Contrast" applies automatically.
     var color: Color {
         switch self {
-        case .calm:    return .green
+        case .calm:    return .blue
         case .warning: return .orange
         case .danger:  return .red
         }
+    }
+
+    /// The guidance card's glass tint; each passes WCAG AA with `ink` even over a white scene.
+    var cardFill: Color {
+        switch self {
+        case .calm:    return Color(red: 0.04, green: 0.30, blue: 0.72)
+        case .warning: return Color(red: 1.00, green: 0.70, blue: 0.20)
+        case .danger:  return Color(red: 0.70, green: 0.11, blue: 0.11)
+        }
+    }
+
+    var ink: Color {
+        self == .warning ? .black : .white
     }
 }
 
@@ -198,9 +211,6 @@ private struct GuidanceCard: View {
     let message: String
     let severity: Severity
 
-    /// Dark enough for white text to pass WCAG AA contrast.
-    private static let dangerFill = Color(red: 0.70, green: 0.11, blue: 0.11)
-
     var body: some View {
         let parts = Self.split(message)
         let isDanger = severity == .danger
@@ -208,22 +218,22 @@ private struct GuidanceCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Label(severity.label, systemImage: severity.icon)
                 .font(.headline)
-                .foregroundStyle(isDanger ? Color.white : severity.color)
+                .foregroundStyle(severity.ink)
 
             Text(parts.headline)
                 .font(isDanger ? .largeTitle.bold() : .title.bold())
-                .foregroundStyle(isDanger ? Color.white : Color.primary)
+                .foregroundStyle(severity.ink)
 
             if let detail = parts.detail {
                 // Full-contrast text; size alone sets the hierarchy for low-vision readers.
                 Text(detail)
                     .font(.title3)
-                    .foregroundStyle(isDanger ? Color.white : Color.primary)
+                    .foregroundStyle(severity.ink)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .modifier(CardBackground(severity: severity, dangerFill: Self.dangerFill))
+        .modifier(CardBackground(severity: severity))
         .accessibilityElement(children: .combine)
     }
 
@@ -237,23 +247,16 @@ private struct GuidanceCard: View {
     }
 }
 
+/// Glass tinted with the severity color: nearly opaque, so the text keeps its contrast
+/// over any camera image.
 private struct CardBackground: ViewModifier {
     let severity: Severity
-    let dangerFill: Color
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-
-        switch severity {
-        case .danger:
-            content.background(dangerFill, in: shape)
-        case .warning:
-            content
-                .glassSurface(in: shape)
-                .overlay(shape.strokeBorder(severity.color, lineWidth: 2))
-        case .calm:
-            content.glassSurface(in: shape)
-        }
+        content
+            .background(severity.cardFill.opacity(0.9), in: shape)
+            .glassSurface(in: shape)
     }
 }
 
@@ -349,13 +352,30 @@ private struct TopScrim: View {
 }
 
 // MARK: - Danger Edge
-/// A thick red frame around the whole screen while the guidance is "위험".
+/// A red glow spreading in from the screen's rounded edges while the guidance is "위험".
 private struct DangerEdge: View {
     var body: some View {
-        Rectangle()
-            .strokeBorder(Color.red, lineWidth: 10)
+        glow
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var glow: some View {
+        if #available(iOS 26.0, *) {
+            blurredEdge(ConcentricRectangle())
+        } else {
+            // shortcut: no public API for the display corner radius before iOS 26, so 55 pt
+            // (the largest current iPhone corner) keeps the corners lit on every model.
+            blurredEdge(RoundedRectangle(cornerRadius: 55, style: .continuous))
+        }
+    }
+
+    /// A wide stroke on the screen edge, blurred so it fades toward the middle.
+    private func blurredEdge(_ shape: some Shape) -> some View {
+        shape
+            .stroke(Color.red.opacity(0.75), lineWidth: 90)
+            .blur(radius: 40)
     }
 }
 
