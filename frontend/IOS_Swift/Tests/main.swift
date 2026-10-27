@@ -25,6 +25,9 @@ guard arguments.count == 5 else {
 runGuidanceUnitTests()
 runDepthTests()
 runObstacleTests()
+runTextAimingTests()
+runDuplicateTextTests()
+runNumberSafetyTests()
 runGuidanceParityTests(fixturesURL: URL(fileURLWithPath: arguments[1]))
 runDetectorTests(
     modelURL: URL(fileURLWithPath: arguments[2]),

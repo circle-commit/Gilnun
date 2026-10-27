@@ -13,11 +13,13 @@ final class DuplicateTextSuppressor {
             return false
         }
 
+        // Shortly after speaking, a partial re-read of the same text stays quiet. New text that
+        // only shares a common word (such as a page turn) is still read.
         if now.timeIntervalSince(lastSpokenDate) < cooldown {
             let previousWords = Set(lastNormalizedText.split(separator: " "))
             let newWords = Set(normalized.split(separator: " "))
             let overlap = previousWords.intersection(newWords).count
-            if overlap > 0 {
+            if Double(overlap) >= Double(min(previousWords.count, newWords.count)) * 0.5 {
                 return false
             }
         }
