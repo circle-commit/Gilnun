@@ -312,11 +312,13 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             lastLiveGuideTime = now
         }
         let shouldClearGuide = !hasNewGuide && now - lastLiveGuideTime > liveGuideDisplayDuration
-        let boxes = makeLiveBoxes(from: result.detections, imageSize: frameSize)
-        let primaryDetection = result.detections.first
+        // Ranked by what is shown, so a capped object beside the path never hides one in it.
+        let shown = stableSorted(result.detections) { GuidanceRules.displayRisk($0) > GuidanceRules.displayRisk($1) }
+        let boxes = makeLiveBoxes(from: shown, imageSize: frameSize)
+        let primaryDetection = shown.first
         // A close obstacle shows as a warning (within 1.5 m) or danger (within 1 m).
         let obstacleRisk = result.closeObstacle.map { $0.distance < 1.0 ? 90 : 70 } ?? 0
-        let riskScore = max(primaryDetection?.riskScore ?? 0, obstacleRisk)
+        let riskScore = max(primaryDetection.map(GuidanceRules.displayRisk) ?? 0, obstacleRisk)
         if riskScore >= displayedRiskScore || now - displayedRiskTime > riskDisplayHold {
             displayedRiskScore = riskScore
             displayedRiskTime = now
@@ -361,7 +363,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             .map { detection in
                 LiveGuidanceBox(
                     rect: normalizedRect(for: detection.bbox, imageSize: imageSize),
-                    riskScore: detection.riskScore,
+                    riskScore: GuidanceRules.displayRisk(detection),
                     label: detection.koreanLabel,
                     positionLabel: detection.position.koreanName,
                     distanceText: detection.distanceMeters.map { String(format: "%.1fm", $0) }

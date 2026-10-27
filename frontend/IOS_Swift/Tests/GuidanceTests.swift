@@ -51,6 +51,75 @@ func runGuidanceUnitTests() {
     expect(events(noisyPole, "pole") == 1, "confident pole speaks on the third frame")
 
     expect(events(zeroCooldownTracker(), "car") == 1, "car speaks on the first frame")
+
+    // Calmer speech (the iOS app): fixed objects beside the path only within reach,
+    // a calm gap between ordinary sentences, and poles that do not "come closer".
+    func object(_ label: String, meters: Double, _ position: HorizontalPosition = .left, right: Double = 300) -> SceneDetection {
+        var detection = SceneDetection(
+            label: label, koreanLabel: SceneAnalyzer.koreanLabels[label] ?? label, confidence: 0.8,
+            bbox: BoundingBox(x1: 100, y1: 900, x2: right, y2: 1300), frameWidth: 1080,
+            position: position, areaRatio: 0.05, verticalRatio: 0.7
+        )
+        detection.distanceMeters = meters
+        return detection
+    }
+    func spoken(_ tracker: GuidanceEventTracker, _ detection: SceneDetection, frames: Int) -> [String] {
+        (0..<frames).flatMap { _ -> [String] in
+            now += 0.2
+            return tracker.chooseEvents(GuidanceRules.enrichAndPrioritize([detection]), now: now).map(\.message)
+        }
+    }
+    func tracker(calmer: Bool) -> GuidanceEventTracker {
+        GuidanceEventTracker(cooldowns: .init(global: 0, object: 0, situation: 0, signature: 0), calmerSpeech: calmer) { _ in 0 }
+    }
+    expect(spoken(tracker(calmer: false), object("pole", meters: 3), frames: 4).count == 1, "backend: pole beside the path is spoken")
+    expect(spoken(tracker(calmer: true), object("pole", meters: 3), frames: 4).isEmpty, "calmer: pole beside the path at 3 m is quiet")
+    expect(spoken(tracker(calmer: true), object("pole", meters: 1), frames: 4).count == 1, "calmer: pole within reach is spoken")
+    expect(spoken(tracker(calmer: true), object("pole", meters: 3, .center), frames: 4).count == 1, "calmer: pole in the path is spoken")
+    expect(
+        spoken(tracker(calmer: true), object("movable_signage", meters: 2, right: 600), frames: 4).count == 1,
+        "calmer: a sign beside the path whose box crosses the middle reaches into the path and is spoken"
+    )
+    let reach = tracker(calmer: true)
+    expect(spoken(reach, object("pole", meters: 2), frames: 4).isEmpty, "calmer: pole at 2 m beside the path is quiet")
+    expect(spoken(reach, object("pole", meters: 1.4), frames: 1).count == 1, "calmer: spoken on its first frame within 1.5 m")
+    let longWalk = tracker(calmer: true)
+    expect(spoken(longWalk, object("pole", meters: 2), frames: 65).isEmpty, "calmer: pole beside the path for 13 s is quiet")
+    expect(spoken(longWalk, object("pole", meters: 1.4), frames: 1).count == 1, "calmer: still spoken on its first frame within reach")
+    expect(spoken(tracker(calmer: true), object("car", meters: 6), frames: 1).count == 1, "calmer: vehicles beside the path are still spoken")
+
+    let gap = tracker(calmer: true)
+    expect(spoken(gap, object("person", meters: 4), frames: 2).count == 1, "calmer: person beside the path is spoken")
+    expect(spoken(gap, object("dog", meters: 4, .right), frames: 3).isEmpty, "calmer: another calm sentence waits")
+    now += 4
+    expect(spoken(gap, object("dog", meters: 4, .right), frames: 1).count == 1, "calmer: spoken after the calm gap")
+    expect(spoken(gap, object("bollard", meters: 2, .center), frames: 3).count == 1, "calmer: something in the path does not wait")
+    expect(spoken(gap, object("car", meters: 6, .right), frames: 1).isEmpty, "calmer: a car beside the path and not coming waits")
+    var comingPerson = object("person", meters: 4)
+    comingPerson.approaching = true
+    expect(spoken(gap, comingPerson, frames: 1).count == 1, "calmer: a person coming closer does not wait")
+
+    // The screen keeps "위험" (85 and up) for what is in the way or coming at the user.
+    let parkedCar = GuidanceRules.enrichAndPrioritize([object("car", meters: 6)])[0]
+    let personAhead = GuidanceRules.enrichAndPrioritize([object("person", meters: 2, .center)])[0]
+    expect(parkedCar.riskScore >= 85 && GuidanceRules.displayRisk(parkedCar) == 84, "display: a car beside the path shows 주의")
+    expect(GuidanceRules.displayRisk(personAhead) >= 85, "display: a person in the way shows 위험")
+    var sideSign = object("movable_signage", meters: 2)
+    sideSign.approaching = true
+    var crossingSign = object("movable_signage", meters: 2, right: 600)
+    crossingSign.approaching = true
+    let signs = GuidanceRules.enrichAndPrioritize([sideSign, crossingSign])
+    expect(signs.allSatisfy { $0.riskScore >= 85 }, "display: both signs score high")
+    expect(GuidanceRules.displayRisk(signs.first { !GuidanceRules.reachesPath($0) }!) == 84, "display: a sign beside the path shows 주의")
+    expect(GuidanceRules.displayRisk(signs.first { GuidanceRules.reachesPath($0) }!) >= 85, "display: a sign reaching into the path shows 위험")
+
+    var movingPole = object("pole", meters: 1)
+    movingPole.approaching = true
+    let pole1m = GuidanceRules.enrichAndPrioritize([movingPole])[0]
+    let backendWords = GuidanceRules.detectionMessage(for: pole1m, eventType: .approaching) { _ in 0 }
+    let calmerWords = GuidanceRules.detectionMessage(for: pole1m, eventType: .approaching, calmerSpeech: true) { _ in 0 }
+    expect(backendWords.contains("다가오고"), "backend: \(backendWords)")
+    expect(!calmerWords.contains("다가오고") && calmerWords.contains("가까워지고"), "calmer: a pole does not come closer: \(calmerWords)")
 }
 
 private func unitDetection(
