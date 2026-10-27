@@ -105,6 +105,30 @@ nonisolated enum GuidanceRules {
         return .obstacle
     }
 
+    /// Things that stay put: the user walks toward them; they never come closer.
+    static func isFixed(_ label: String) -> Bool {
+        let group = objectGroup(for: label)
+        return group == .obstacle || group == .traffic
+    }
+
+    /// The box spans the frame's middle, so the object reaches into the walking line even
+    /// when its center sits in a side third.
+    static func reachesPath(_ detection: SceneDetection) -> Bool {
+        let middle = detection.frameWidth / 2
+        return detection.bbox.x1 <= middle && middle <= detection.bbox.x2
+    }
+
+    /// Risk shown on screen. "위험" (85 and up) is for what is in the way or coming at the
+    /// user; anything else shows as "주의" at most. A fixed object only "approaches" because
+    /// the user walks toward it.
+    static func displayRisk(_ detection: SceneDetection) -> Int {
+        let distance = distanceLevel(of: detection)
+        let near = distance == .close || distance == .veryClose
+        let inTheWay = detection.frontDangerZone || (reachesPath(detection) && near)
+            || (detection.approaching && !isFixed(detection.label))
+        return inTheWay ? detection.riskScore : min(detection.riskScore, 84)
+    }
+
     static func distanceLevel(label: String, areaRatio: Double, verticalRatio: Double) -> DistanceLevel {
         let thresholds = distanceThresholds(for: label)
         let area = clamp01(areaRatio)
@@ -329,10 +353,17 @@ nonisolated enum GuidanceRules {
     static func detectionMessage(
         for detection: SceneDetection,
         eventType: GuidanceEventType,
+        calmerSpeech: Bool = false,
         random: (Double) -> Double
     ) -> String {
         let context = messageContext(for: detection, eventType: eventType)
-        let template = chooseWeightedTemplate(weightedTemplates(for: context), random: random)
+        var templates = weightedTemplates(for: context)
+        // "다가오고 있어요" made a pole sound like it was moving.
+        if calmerSpeech && isFixed(detection.label) {
+            let still = templates.filter { !$0.text.contains("다가오고") }
+            templates = still.isEmpty ? templates : still
+        }
+        let template = chooseWeightedTemplate(templates, random: random)
         let message = format(template, with: context)
         guard let meters = detection.distanceMeters else { return message }
         return "\(message) \(distancePhrase(meters: meters))"
@@ -542,6 +573,12 @@ nonisolated final class GuidanceEventTracker {
     private static let objectBucketWidth = 192.0
 
     private let cooldowns: Cooldowns
+    /// The iOS app's changes after a field test, where guidance changed every 2.3 s and half
+    /// of it was about trees and poles beside the path: fixed objects beside the path are
+    /// spoken only within reach, calm guidance waits `calmGap` after the last sentence, and
+    /// fixed objects are never said to be coming closer. Off, the tracker matches the backend.
+    private let calmerSpeech: Bool
+    private static let calmGap: TimeInterval = 4.0
     private let random: (Double) -> Double
     private var states: [String: SituationState] = [:]
     private var lastSituationAt: [String: TimeInterval] = [:]
@@ -550,9 +587,11 @@ nonisolated final class GuidanceEventTracker {
 
     init(
         cooldowns: Cooldowns = Cooldowns(),
+        calmerSpeech: Bool = false,
         random: @escaping (Double) -> Double = { Double.random(in: 0...$0) }
     ) {
         self.cooldowns = cooldowns
+        self.calmerSpeech = calmerSpeech
         self.random = random
     }
 
@@ -579,6 +618,12 @@ nonisolated final class GuidanceEventTracker {
                 continue
             }
 
+            // Remembered while quiet, so it is spoken on its first frame within reach.
+            if calmerSpeech && Self.isOutOfTheWay(detection) {
+                rememberSeen(detection, now: now)
+                continue
+            }
+
             let event = classifyEvent(detection, now: now)
             rememberSeen(detection, now: now)
             if let event {
@@ -598,7 +643,9 @@ nonisolated final class GuidanceEventTracker {
 
         var selected: [GuidanceEvent] = []
         for var event in ordered {
-            event.message = GuidanceRules.detectionMessage(for: event.detection, eventType: event.type, random: random)
+            event.message = GuidanceRules.detectionMessage(
+                for: event.detection, eventType: event.type, calmerSpeech: calmerSpeech, random: random
+            )
             guard !event.message.isEmpty, canSpeak(event, now: now) else { continue }
 
             selected.append(event)
@@ -683,6 +730,9 @@ nonisolated final class GuidanceEventTracker {
         if now - lastSpokenAt < cooldowns.global {
             return false
         }
+        if calmerSpeech && !Self.isUrgent(event) && now - lastSpokenAt < Self.calmGap {
+            return false
+        }
 
         let objectCooldown = event.type == .approaching || event.type == .enteredFrontZone
             ? 2.5
@@ -708,6 +758,22 @@ nonisolated final class GuidanceEventTracker {
         lastSituationAt[situationKey(event)] = now
         lastSignatureAt[speechSignature(event)] = now
         lastSpokenAt = now
+    }
+
+    /// A fixed object beside the path and out of reach: 1.5 m with LiDAR, the box's
+    /// "very close" level without. One that reaches into the path is never out of the way.
+    private static func isOutOfTheWay(_ detection: SceneDetection) -> Bool {
+        let outOfReach = detection.distanceMeters.map { $0 >= 1.5 } ?? (GuidanceRules.distanceLevel(of: detection) != .veryClose)
+        return GuidanceRules.isFixed(detection.label) && detection.position != .center
+            && !GuidanceRules.reachesPath(detection) && outOfReach
+    }
+
+    /// In the path, coming closer or within 2.5 m: spoken without the calm gap.
+    private static func isUrgent(_ event: GuidanceEvent) -> Bool {
+        let detection = event.detection
+        let distance = GuidanceRules.distanceLevel(of: detection)
+        return detection.position == .center || event.type == .approaching || detection.approaching
+            || distance == .close || distance == .veryClose
     }
 
     private func passesSpeechConfidence(_ detection: SceneDetection) -> Bool {

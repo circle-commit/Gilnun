@@ -58,7 +58,7 @@ nonisolated final class SceneAnalyzer {
     private let eventTracker: GuidanceEventTracker
     private let obstacleTracker = CloseObstacleTracker()
 
-    init(eventTracker: GuidanceEventTracker = GuidanceEventTracker()) {
+    init(eventTracker: GuidanceEventTracker = GuidanceEventTracker(calmerSpeech: true)) {
         self.eventTracker = eventTracker
     }
 
@@ -147,8 +147,7 @@ nonisolated final class SceneAnalyzer {
     /// A detection across the middle of the frame at about the obstacle's distance.
     private static func detection(_ detection: SceneDetection, shows obstacle: CloseObstacle) -> Bool {
         guard let meters = detection.distanceMeters, abs(meters - obstacle.distance) <= 0.4 else { return false }
-        let middle = detection.frameWidth / 2
-        return detection.position == .center || (detection.bbox.x1 <= middle && middle <= detection.bbox.x2)
+        return detection.position == .center || GuidanceRules.reachesPath(detection)
     }
 
     private func rounded(_ value: Double, places: Int) -> Double {
