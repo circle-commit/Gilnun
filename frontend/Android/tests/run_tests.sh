@@ -15,7 +15,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 python3 "$IOS_TESTS/guidance_fixtures.py" "$WORK_DIR/guidance_fixtures.json"
 
 cd "$TESTS_DIR"
-gradle --quiet test \
+gradle --quiet --max-workers 1 test \
     -Dgilnun.fixtures="$WORK_DIR/guidance_fixtures.json" \
     -Dgilnun.model="$REPO_ROOT/frontend/Android/app/src/main/assets/sidewalk_detector.onnx" \
     -Dgilnun.golden="$IOS_TESTS/detector_golden.json" \
