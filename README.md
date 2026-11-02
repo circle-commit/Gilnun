@@ -9,7 +9,7 @@
 - **문자 읽기(OCR) 모드** — 표지판, 라벨, 문서, 메뉴 등 화면 속 글자를 읽어 음성으로 안내
 - **실시간 보행 안내(Live) 모드** — 전방의 장애물·차량·사람 등을 탐지하고 위치(왼쪽/정면/오른쪽)와 위험도를 분석해 음성으로 안내
 
-**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLO11m(Core ML)으로 물체 28종을 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱은 아직 카메라 프레임을 FastAPI 백엔드로 전송하며, 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 음성 안내 문장을 생성합니다.
+**iOS 앱은 서버 없이 기기 안에서 모든 분석을 수행합니다.** YOLO11m(Core ML)으로 물체 28종을 탐지하고 Apple Vision으로 한국어 문자를 인식하므로, 네트워크가 없어도 동작하고 카메라 영상이 기기 밖으로 나가지 않습니다. Android 앱도 같은 YOLO11m 모델(ONNX Runtime)과 ML Kit 한국어 문자 인식으로 기기 안에서 동작합니다. FastAPI 백엔드는 PaddleOCR(문자 인식)과 YOLOv8n(객체 탐지)으로 같은 안내를 만드는 기준 구현이며, 두 앱의 안내 로직은 테스트로 백엔드와 결과를 맞춥니다.
 
 ---
 
@@ -22,17 +22,23 @@ iOS (온디바이스)
 │        └► Text: Apple Vision 한국어 OCR ───────────────────► 음성/햅틱 │
 └──────────────────────────────────────────────────────────┘
 
-Android (서버 연동)
-┌──────────────┐   카메라 프레임   ┌─────────────────────┐
-│  Android 앱   │  (multipart 업로드) │   FastAPI 백엔드       │
-│ - 카메라 캡처   │ ───────────────► │   POST /analyze      │
-│ - 모드 전환    │                  │  mode=text → PaddleOCR │
-│ - 음성/햅틱 출력 │ ◄─────────────── │  mode=live → YOLOv8n   │
-└──────────────┘   음성 안내 JSON   │  위치·위험도 분석·문장 생성 │
-                                   └─────────────────────┘
+Android (온디바이스)
+┌──────────────────────────────────────────────────────────┐
+│ 카메라 ─► Live: YOLO11m (ONNX Runtime, 최대 초당 5회) ─► 위치·위험도 분석 ─► 음성/진동 │
+│        └► Text: ML Kit 한국어 OCR ──────────────────────► 음성/진동 │
+└──────────────────────────────────────────────────────────┘
+
+백엔드 (기준 구현)
+┌─────────────────────┐
+│   FastAPI 백엔드       │
+│   POST /analyze      │
+│  mode=text → PaddleOCR │
+│  mode=live → YOLOv8n   │
+│  위치·위험도 분석·문장 생성 │
+└─────────────────────┘
 ```
 
-백엔드는 같은 `/analyze` 엔드포인트가 `mode` 파라미터(`text` / `live`)로 두 모드를 모두 처리합니다. iOS 앱의 위험도·거리·안내 문장 로직은 백엔드 Python 코드를 Swift로 옮긴 것이며, 테스트로 두 구현의 결과가 같은지 확인합니다.
+백엔드는 같은 `/analyze` 엔드포인트가 `mode` 파라미터(`text` / `live`)로 두 모드를 모두 처리합니다. iOS·Android 앱의 위험도·거리·안내 문장 로직은 백엔드 Python 코드를 Swift·Kotlin으로 옮긴 것이며, 테스트로 구현들의 결과가 같은지 확인합니다.
 
 ---
 
@@ -137,9 +143,17 @@ frontend/IOS_Swift/Tests/run_tests.sh
 이 테스트와 iOS 시뮬레이터 빌드는 PR마다 GitHub Actions(`.github/workflows/ios.yml`)에서도 자동으로 실행됩니다. `backend/services/guidance_message_service.py` 등 안내 로직을 바꿀 때는 Swift 코드도 함께 고치고 이 테스트를 실행하세요. 모델을 다시 학습했다면 `python frontend/IOS_Swift/Tests/make_detector_golden.py`로 기준 탐지 결과도 갱신합니다.
 
 ### Android (`frontend/Android`)
-iOS 앱의 네이티브 Android 버전입니다. iOS 버전이 완성되면 이를 기준으로 다시 이식할 예정이라, 그때까지는 이전 앱 이름(Glass)을 그대로 씁니다. CameraX로 카메라 프레임을 스트리밍하고, ML Kit 한국어 텍스트 인식으로 OCR 대상의 안정성을 로컬에서 판단한 뒤 백엔드 `/analyze`를 호출합니다. Android Studio에서 `frontend/Android`를 엽니다.
+iOS 앱의 네이티브 Android 버전(`길눈`)입니다. iOS처럼 서버 없이 기기에서 동작하고, 인터넷 권한이 없어 카메라 영상이 기기 밖으로 나가지 않습니다. Android Studio에서 `frontend/Android`를 열고 Android 8.0 이상 실제 기기에서 실행합니다.
 
-> Android 앱의 `SERVER_URL`을 백엔드 주소에 맞게 수정해야 합니다. 카메라·진동 기능은 실제 기기에서만 동작합니다.
+- **실시간 보행 안내**: iOS와 같은 YOLO11m 모델(`app/src/main/assets/sidewalk_detector.onnx`, 입력 640×384)을 ONNX Runtime으로 최대 초당 5회 실행하고, iOS에서 옮긴 `SceneAnalyzer`·`GuidanceEngine`·`ApproachTracker`가 접근 추적·위험도·안내 문장을 만듭니다. LiDAR가 없으므로 거리는 상자 크기와 위치로 추정합니다.
+- **문자 읽기**: ML Kit 한국어 인식(기기 내)으로 글자를 찾고, 글자가 잘리면 휴대폰을 어느 쪽으로 옮길지 말해 줍니다. 화면이 안정되면 글자 부분을 확대해 다시 읽고, 숫자가 있는 줄은 두 번 똑같이 읽혔을 때만 읽어 줍니다. 어두우면 플래시를 켜고, 화면을 한 번 누르면 다시 읽습니다.
+- **모드 전환·음성·진동**: 아래 버튼이나 화면 두 번 누르기로 모드를 바꾸고, 위급한 안내만 말을 끊으며, 다른 앱 소리는 안내하는 동안 작아집니다.
+
+Android 안내 로직이 백엔드와 같은 결과를 내는지, ONNX 모델이 PyTorch 모델과 같은 객체를 찾는지 Android SDK 없이 확인할 수 있습니다(JDK 17 이상, Gradle, `python3` 필요). 모델을 다시 학습했다면 `python frontend/Android/tools/export_onnx.py`로 Android 모델도 다시 변환합니다.
+
+```bash
+frontend/Android/tests/run_tests.sh
+```
 
 ---
 
@@ -160,7 +174,7 @@ iOS 앱의 모델은 YOLO11m으로, AI Hub 인도보행영상 전체(약 27만 �
 
 `python -m vision.analyze_errors`로 오류를 나눠 보면, 남은 오탐의 상당수는 데이터에 라벨이 빠진 실제 물체(특히 사람, 기둥, 나무)라서 실제 정밀도는 이보다 높습니다. 무작위로 뽑은 오탐 48개 중 약 86%(YOLO11s는 약 92%)가 그런 물체였습니다. 놓치는 물체는 화면의 1~3%인 작은(먼) 물체(재현율 0.90, YOLO11s 0.87)와 화면을 40% 넘게 채우는 아주 가까운 물체(0.86)에 몰려 있고, 아주 가까운 물체는 LiDAR가 종류와 관계없이 경고합니다. 아이폰 16 Pro에서 한 장 처리에 약 6ms(YOLO11s 약 2ms)가 걸립니다.
 
-다시 학습하는 절차(데이터 받기, GPU 서버 학습, 앱 반영)는 [`docs/retraining.md`](docs/retraining.md)에 정리되어 있습니다. Android 앱이 쓰는 백엔드는 아직 처음 모델(YOLOv8n)을 씁니다.
+다시 학습하는 절차(데이터 받기, GPU 서버 학습, 앱 반영)는 [`docs/retraining.md`](docs/retraining.md)에 정리되어 있습니다. 백엔드는 아직 처음 모델(YOLOv8n)을 씁니다.
 
 ```bash
 # 학습 (기본값: YOLO11m, 40 에폭, 배치 128, 사용 가능한 GPU 자동 선택)
@@ -286,4 +300,4 @@ python scripts/convert_cvat_to_yolo.py
 - 세션별 객체 추적으로 접근 경고 정교화
 - LiDAR 거리 변화로 다가오는 물체를 더 빨리 감지
 - 문자 감지·위험 경고·방향 안내용 햅틱 피드백 확장
-- Android 앱 온디바이스 전환(TFLite) 및 다국어 OCR 개선
+- Android 실제 기기에서 탐지 속도·문자 인식 신뢰도 기준 검증 및 다국어 OCR 개선

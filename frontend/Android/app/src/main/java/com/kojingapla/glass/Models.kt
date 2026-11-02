@@ -1,8 +1,8 @@
 package com.kojingapla.glass
 
-enum class ProcessingMode(val wireName: String) {
-    LIVE("live"),
-    TEXT("text")
+enum class ProcessingMode {
+    LIVE,
+    TEXT
 }
 
 enum class LiveOcrStatus(val message: String) {
@@ -13,34 +13,6 @@ enum class LiveOcrStatus(val message: String) {
     COOLING_DOWN("새 문자를 기다리는 중..."),
     UNAVAILABLE("카메라를 사용할 수 없습니다")
 }
-
-data class DetectionResponse(
-    val label: String,
-    val koreanLabel: String?,
-    val confidence: Double?,
-    val position: String?,
-    val bboxXyxy: List<Double>?,
-    val areaRatio: Double?,
-    val approaching: Boolean?,
-    val riskScore: Int?
-)
-
-data class AnalysisResponse(
-    val status: String,
-    val mode: String,
-    val detectedText: String?,
-    val voiceGuide: String,
-    val warnings: List<String>?,
-    val detections: List<DetectionResponse>?
-)
-
-data class OcrFrameAnalysis(
-    val textRegion: RectRatio?,
-    val confidence: Float,
-    val blurScore: Double,
-    val movementScore: Double,
-    val timestampMs: Long
-)
 
 data class RectRatio(
     val left: Float,
@@ -54,11 +26,6 @@ data class RectRatio(
     val centerY: Float get() = (top + bottom) / 2f
 }
 
-data class TextStabilityDecision(
-    val status: LiveOcrStatus,
-    val shouldRunFullOcr: Boolean
-)
-
 /// A single bounding box to render over the live camera preview.
 ///
 /// `rect` is normalized to the 0...1 image coordinate space so the view layer can
@@ -67,5 +34,7 @@ data class TextStabilityDecision(
 data class LiveGuidanceBox(
     val rect: RectRatio,
     val riskScore: Int,
-    val label: String
+    val label: String,
+    /// "왼쪽", "정면" or "오른쪽".
+    val positionLabel: String
 )
