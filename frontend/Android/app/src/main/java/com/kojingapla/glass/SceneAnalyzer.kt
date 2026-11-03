@@ -9,7 +9,9 @@ data class LiveSceneResult(
     /** Highest risk level among the announced objects, used to decide whether to interrupt speech. */
     val voiceUrgency: RiskLevel,
     /** Detections sorted by guidance priority (riskiest first). */
-    val detections: List<SceneDetection>
+    val detections: List<SceneDetection>,
+    /** `voiceGuide` split into sentences, each panned toward its object. */
+    val sentences: List<SpokenSentence> = emptyList()
 ) {
     companion object {
         val EMPTY = LiveSceneResult("", RiskLevel.LOW, emptyList())
@@ -78,7 +80,8 @@ class SceneAnalyzer(
         return LiveSceneResult(
             voiceGuide = events.joinToString(" ") { it.message },
             voiceUrgency = events.maxOfOrNull { it.detection.riskLevel } ?: RiskLevel.LOW,
-            detections = prioritized
+            detections = prioritized,
+            sentences = events.map { SpokenSentence(it.message, SpatialAudio.pan(it.detection.bbox, frameWidth)) }
         )
     }
 

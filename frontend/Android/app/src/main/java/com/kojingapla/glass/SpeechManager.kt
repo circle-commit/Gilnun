@@ -44,7 +44,7 @@ class SpeechManager(context: Context) : TextToSpeech.OnInitListener {
     private var nextUtteranceNumber = 0L
     private var currentLanguage: String? = null
 
-    private class PendingGuidance(val text: String, val urgency: RiskLevel, val createdAtMs: Long)
+    private class PendingGuidance(val sentences: List<SpokenSentence>, val urgency: RiskLevel, val createdAtMs: Long)
 
     override fun onInit(status: Int) {
         main.post {
@@ -79,7 +79,7 @@ class SpeechManager(context: Context) : TextToSpeech.OnInitListener {
         main.post {
             pendingGuidance = null
             // Only a critical live warning may cut this off.
-            startSpeaking(text, RiskLevel.HIGH, onFinish)
+            startSpeaking(listOf(SpokenSentence(text, 0f)), RiskLevel.HIGH, onFinish)
         }
     }
 
@@ -88,15 +88,21 @@ class SpeechManager(context: Context) : TextToSpeech.OnInitListener {
      * Less urgent guidance waits for the current sentence; only the newest one is kept.
      */
     fun speakGuidance(text: String, urgency: RiskLevel) {
-        if (text.isEmpty()) return
+        speakGuidance(listOf(SpokenSentence(text, 0f)), urgency)
+    }
+
+    /** Like `speakGuidance(text, urgency)`, with each sentence panned toward its object (see `SpatialAudio`). */
+    fun speakGuidance(sentences: List<SpokenSentence>, urgency: RiskLevel) {
+        val spoken = sentences.filter { it.text.isNotEmpty() }
+        if (spoken.isEmpty()) return
         main.post {
             val speakingUrgency = currentUrgency
             if (currentUtteranceId != null && speakingUrgency != null && urgency <= speakingUrgency) {
-                pendingGuidance = PendingGuidance(text, urgency, SystemClock.elapsedRealtime())
+                pendingGuidance = PendingGuidance(spoken, urgency, SystemClock.elapsedRealtime())
                 return@post
             }
             pendingGuidance = null
-            startSpeaking(text, urgency, null)
+            startSpeaking(spoken, urgency, null)
         }
     }
 
@@ -119,22 +125,32 @@ class SpeechManager(context: Context) : TextToSpeech.OnInitListener {
         audioManager.abandonAudioFocusRequest(focusRequest)
     }
 
-    private fun startSpeaking(text: String, urgency: RiskLevel, onFinish: (() -> Unit)?) {
+    /** Speaks `sentences` in order, cutting off what is playing; the last one ends the request. */
+    private fun startSpeaking(sentences: List<SpokenSentence>, urgency: RiskLevel, onFinish: (() -> Unit)?) {
         if (!isReady) {
             // The engine is still starting; keep only the latest request.
-            waitingForEngine = { startSpeaking(text, urgency, onFinish) }
+            waitingForEngine = { startSpeaking(sentences, urgency, onFinish) }
             return
         }
 
-        val utteranceId = "gilnun-${nextUtteranceNumber++}"
-        if (onFinish != null) finishHandlers[utteranceId] = onFinish
-        currentUtteranceId = utteranceId
+        val utteranceIds = sentences.map { "gilnun-${nextUtteranceNumber++}" }
+        val lastId = utteranceIds.last()
+        if (onFinish != null) finishHandlers[lastId] = onFinish
+        currentUtteranceId = lastId
         currentUrgency = urgency
 
-        useLanguage(if (text.any { it in '가'..'힯' }) Locale.KOREAN else Locale.US)
+        val text = sentences.joinToString(" ") { it.text }
+        useLanguage(if (text.any { it in '\uAC00'..'\uD7AF' }) Locale.KOREAN else Locale.US)
         audioManager.requestAudioFocus(focusRequest)
-        val result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), utteranceId)
-        if (result != TextToSpeech.SUCCESS) utteranceEnded(utteranceId, finished = false)
+        sentences.forEachIndexed { index, sentence ->
+            // The framework applies the pan to its own playback, whichever engine speaks.
+            val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, sentence.pan) }
+            val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            if (tts.speak(sentence.text, queueMode, params, utteranceIds[index]) != TextToSpeech.SUCCESS) {
+                utteranceEnded(lastId, finished = false)
+                return
+            }
+        }
     }
 
     private fun utteranceEnded(utteranceId: String, finished: Boolean) {
@@ -154,7 +170,7 @@ class SpeechManager(context: Context) : TextToSpeech.OnInitListener {
         pendingGuidance = null
         // Waiting guidance older than this is dropped; the scene has likely changed.
         if (SystemClock.elapsedRealtime() - pending.createdAtMs > PENDING_GUIDANCE_LIFETIME_MS) return
-        startSpeaking(pending.text, pending.urgency, null)
+        startSpeaking(pending.sentences, pending.urgency, null)
     }
 
     /** Prefers the best installed voice for the language; network voices would send text off the phone. */

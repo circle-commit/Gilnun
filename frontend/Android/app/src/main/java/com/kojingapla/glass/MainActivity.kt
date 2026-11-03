@@ -674,7 +674,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (hasNewGuide && currentMode == ProcessingMode.LIVE) {
-            speech.speakGuidance(result.voiceGuide, result.voiceUrgency)
+            speech.speakGuidance(result.sentences, result.voiceUrgency)
         }
     }
 
