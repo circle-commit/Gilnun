@@ -84,6 +84,21 @@ class MainActivity : ComponentActivity() {
     private val pocketCheck = Runnable { checkPocket() }
     private var proximityCovered = false
     private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
+
+    /** Latest gravity reading (device axes), for telling where the camera points. */
+    @Volatile private var gravity: FloatArray? = null
+    private val gravityListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            gravity = event.values.copyOf(3)
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+    }
+
+    // Camera thread only: spoken hints about the phone's angle and the camera's view.
+    private val aimSpeaker = ViewProblemSpeaker()
+    // A dark street stays dark; saying so once a minute is enough.
+    private val sightSpeaker = ViewProblemSpeaker(repeatEvery = 60.0)
     private val proximityListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             val sensor = event.sensor
@@ -188,11 +203,15 @@ class MainActivity : ComponentActivity() {
         sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.let {
             sensorManager.registerListener(proximityListener, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
+        (sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER))?.let {
+            sensorManager.registerListener(gravityListener, it, SensorManager.SENSOR_DELAY_UI)
+        }
     }
 
     override fun onPause() {
         super.onPause()
         sensorManager.unregisterListener(proximityListener)
+        sensorManager.unregisterListener(gravityListener)
         previewView.removeCallbacks(pocketCheck)
     }
 
@@ -631,6 +650,8 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.execute {
             sceneAnalyzer.reset()
             signalTracker.reset()
+            aimSpeaker.reset()
+            sightSpeaker.reset()
             stabilityTracker.reset()
             pendingDetail = null
             darkFrameCount = 0
@@ -746,6 +767,7 @@ class MainActivity : ComponentActivity() {
         if (now - lastLiveAnalysisMs < LIVE_ANALYSIS_INTERVAL_MS) return
         lastLiveAnalysisMs = now
 
+        checkCameraView(image, now / 1000.0)
         val detector = loadObjectDetectorIfNeeded() ?: return
         val frame = ImageProxyBitmapConverter.toUprightBitmap(image, cropToViewport = true)
         val width = frame.width
@@ -763,6 +785,32 @@ class MainActivity : ComponentActivity() {
             now = now / 1000.0
         )
         publishLiveResult(result, signalAnnouncement, width, height, now)
+    }
+
+    /**
+     * Tells the user when the phone points at the ground, the sky or sideways, or when the
+     * lens is covered or the street too dark: otherwise guidance would just go quiet.
+     */
+    private fun checkCameraView(image: ImageProxy, now: Double) {
+        val reading = gravity
+        val aim = reading?.let { CameraViewCheck.aimProblem(it[0], it[1], it[2]) }
+        val luma = ImageProxyBitmapConverter.lumaSample(image)
+        val sight = CameraViewCheck.sightProblem(luma.brightness, luma.blurScore())
+
+        // Both always see the frame, so their timers stay right; an angle problem speaks first.
+        val aimSentence = if (reading != null) aimSpeaker.update(aim, now) else null
+        val sightSentence = sightSpeaker.update(sight, now)
+        (aimSentence ?: sightSentence)?.let {
+            // Keeps the hint on the guidance card for the usual few seconds.
+            lastLiveGuideMs = SystemClock.elapsedRealtime()
+            runOnUiThread {
+                if (currentMode == ProcessingMode.LIVE) {
+                    latestGuide = it
+                    renderState()
+                }
+            }
+            speech.speakGuidance(it, RiskLevel.MEDIUM)
+        }
     }
 
     private fun loadObjectDetectorIfNeeded(): ObjectDetector? {
