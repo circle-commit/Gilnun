@@ -10,7 +10,13 @@ import android.os.Vibrator
 
 enum class HapticEvent {
     READABLE_TEXT_CONFIRMED,
-    MODE_CHANGED
+    MODE_CHANGED,
+    /** The walk signal just turned green: one long, steady vibration. */
+    SIGNAL_GO,
+    /** Red, flashing or uncertain signal: three short taps, "wait". */
+    SIGNAL_WAIT,
+    /** Something in the way right now: two strong pulses, felt even in traffic noise. */
+    DANGER
 }
 
 enum class OcrHapticPulseState {
@@ -61,6 +67,10 @@ class HapticFeedbackManager(context: Context) {
                         VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE)
                     }
                 )
+                // Pedestrian-signal aids pair speech with vibration for loud streets (Oko, LYTNet's app).
+                HapticEvent.SIGNAL_GO -> vibrate(VibrationEffect.createOneShot(600, VibrationEffect.DEFAULT_AMPLITUDE))
+                HapticEvent.SIGNAL_WAIT -> vibrate(VibrationEffect.createWaveform(longArrayOf(0, 60, 120, 60, 120, 60), -1))
+                HapticEvent.DANGER -> vibrate(strongDoublePulse())
             }
         }
     }
@@ -84,6 +94,15 @@ class HapticFeedbackManager(context: Context) {
     }
 
     private fun doublePulse(): VibrationEffect = VibrationEffect.createWaveform(longArrayOf(0, 35, 80, 35), -1)
+
+    private fun strongDoublePulse(): VibrationEffect {
+        val timings = longArrayOf(0, 150, 100, 150)
+        return if (vibrator?.hasAmplitudeControl() == true) {
+            VibrationEffect.createWaveform(timings, intArrayOf(0, 255, 0, 255), -1)
+        } else {
+            VibrationEffect.createWaveform(timings, -1)
+        }
+    }
 
     private fun vibrate(effect: VibrationEffect) {
         val vibrator = vibrator ?: return

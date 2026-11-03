@@ -17,6 +17,11 @@ class IconView(context: Context, private val type: Type) : View(context) {
 
     private var color = 0xFFFFFFFF.toInt()
 
+    init {
+        // Decorative: the button or label next to each icon carries the meaning for TalkBack.
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND

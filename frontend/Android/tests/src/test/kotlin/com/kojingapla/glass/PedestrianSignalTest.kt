@@ -54,9 +54,10 @@ class PedestrianSignalTest {
     fun announcesOnlyConfirmedChanges() {
         val tracker = PedestrianSignalTracker()
         var now = 0.0
+        val cues = ArrayList<SignalCue>()
         fun see(lamp: SignalLamp?, frames: Int = 1): List<String> = (0 until frames).mapNotNull {
             now += 0.25
-            tracker.update(lamp, 0.1f, now)?.message
+            tracker.update(lamp, 0.1f, now)?.also { cues.add(it.cue) }?.message
         }
 
         assertTrue(see(SignalLamp.RED, 2).isEmpty(), "two readings are not enough")
@@ -75,6 +76,10 @@ class PedestrianSignalTest {
         val midPhase = see(SignalLamp.GREEN, 4)
         assertEquals(1, midPhase.size, "a green first seen mid-phase is spoken")
         assertTrue(midPhase[0].contains("다음 신호를 기다리면"), "but the user is told to wait for the next one: $midPhase")
+        assertEquals(
+            listOf(SignalCue.WAIT, SignalCue.FRESH_GREEN, SignalCue.WAIT, SignalCue.WAIT), cues,
+            "only a green seen turning from red vibrates as go; red, flashing and mid-phase green vibrate as wait"
+        )
     }
 
     /** A real Korean crosswalk at night from the sidewalk dataset: the signal across is red. */

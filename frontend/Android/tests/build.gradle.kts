@@ -17,6 +17,7 @@ sourceSets {
                 "Models.kt",
                 "ObjectDetector.kt",
                 "PedestrianSignal.kt",
+                "PocketDetector.kt",
                 "SceneAnalyzer.kt",
                 "SceneDetection.kt",
                 "SpatialAudio.kt",
