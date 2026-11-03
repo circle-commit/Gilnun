@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
 
     // Camera thread only.
     private val sceneAnalyzer = SceneAnalyzer()
+    private val signalTracker = PedestrianSignalTracker()
     private val stabilityTracker = TextStabilityTracker()
     private val duplicateSuppressor = DuplicateTextSuppressor()
     private var objectDetector: ObjectDetector? = null
@@ -505,6 +506,7 @@ class MainActivity : ComponentActivity() {
         speech.clearPendingGuidance()
         cameraExecutor.execute {
             sceneAnalyzer.reset()
+            signalTracker.reset()
             stabilityTracker.reset()
             pendingDetail = null
             darkFrameCount = 0
@@ -629,7 +631,13 @@ class MainActivity : ComponentActivity() {
         val detections = detector.detect(pixels, width, height)
         if (currentMode != ProcessingMode.LIVE) return
         val result = sceneAnalyzer.analyze(detections, width.toDouble(), height.toDouble(), now / 1000.0)
-        publishLiveResult(result, width, height, now)
+        val signal = PedestrianSignalReader.mainSignal(detections, width, height)
+        val signalAnnouncement = signalTracker.update(
+            lamp = signal?.let { PedestrianSignalReader.read(pixels, width, height, it.bbox) },
+            pan = signal?.let { SpatialAudio.pan(it.bbox, width.toDouble()) } ?: 0f,
+            now = now / 1000.0
+        )
+        publishLiveResult(result, signalAnnouncement, width, height, now)
     }
 
     private fun loadObjectDetectorIfNeeded(): ObjectDetector? {
@@ -647,8 +655,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun publishLiveResult(result: LiveSceneResult, frameWidth: Int, frameHeight: Int, now: Long) {
-        val hasNewGuide = result.voiceGuide.isNotEmpty()
+    private fun publishLiveResult(
+        result: LiveSceneResult,
+        signal: SignalAnnouncement?,
+        frameWidth: Int,
+        frameHeight: Int,
+        now: Long
+    ) {
+        // A change of the pedestrian signal comes first, from the signal's side.
+        val sentences = listOfNotNull(signal?.let { SpokenSentence(it.message, it.pan) }) + result.sentences
+        val voiceGuide = sentences.joinToString(" ") { it.text }
+        val urgency = if (signal != null) maxOf(result.voiceUrgency, RiskLevel.HIGH) else result.voiceUrgency
+        val hasNewGuide = voiceGuide.isNotEmpty()
         if (hasNewGuide) lastLiveGuideMs = now
         val shouldClearGuide = !hasNewGuide && now - lastLiveGuideMs > LIVE_GUIDE_DISPLAY_MS
         // Ranked by what is shown, so a capped object beside the path never hides one in it.
@@ -664,7 +682,7 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
             if (currentMode != ProcessingMode.LIVE) return@runOnUiThread
             isLiveAnalysisRunning = true
-            if (hasNewGuide) latestGuide = result.voiceGuide
+            if (hasNewGuide) latestGuide = voiceGuide
             else if (shouldClearGuide) latestGuide = ""
             latestLiveRiskScore = displayedRisk
             liveImageW = frameWidth.toFloat()
@@ -674,7 +692,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (hasNewGuide && currentMode == ProcessingMode.LIVE) {
-            speech.speakGuidance(result.sentences, result.voiceUrgency)
+            speech.speakGuidance(sentences, urgency)
         }
     }
 
