@@ -12,6 +12,7 @@ sourceSets {
             setSrcDirs(listOf(appSources))
             include(
                 "ApproachTracker.kt",
+                "CameraViewCheck.kt",
                 "DuplicateTextSuppressor.kt",
                 "GuidanceEngine.kt",
                 "Models.kt",
