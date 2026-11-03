@@ -16,6 +16,7 @@ sourceSets {
                 "GuidanceEngine.kt",
                 "Models.kt",
                 "ObjectDetector.kt",
+                "PedestrianSignal.kt",
                 "SceneAnalyzer.kt",
                 "SceneDetection.kt",
                 "SpatialAudio.kt",
