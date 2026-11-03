@@ -18,6 +18,7 @@ sourceSets {
                 "ObjectDetector.kt",
                 "SceneAnalyzer.kt",
                 "SceneDetection.kt",
+                "SpatialAudio.kt",
                 "TextReading.kt"
             )
         }
