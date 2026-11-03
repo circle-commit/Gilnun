@@ -1,25 +1,39 @@
 package com.kojingapla.glass
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.speech.tts.TextToSpeech
-import android.speech.tts.Voice
+import android.os.SystemClock
+import android.util.Log
+import android.util.Size
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.camera.core.*
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
@@ -27,50 +41,65 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
-import java.util.Locale
 import java.util.concurrent.Executors
-import kotlin.concurrent.thread
-import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 /**
- * Native Android port of the iOS `Glass` UI (ContentView.swift).
+ * Native Android port of the iOS Gilnun app. Everything runs on the phone, like on iOS:
+ * the sidewalk YOLO model (ONNX Runtime) finds obstacles for live guidance, and ML Kit's
+ * on-device Korean recognizer reads text. Camera frames never leave the device.
  *
- * Layout, palette, typography and component structure mirror SwiftUI 1:1:
- * a GLASS status bar, a mode pill, a bounding-box overlay over the live preview,
- * a guidance card (live) / OCR panel (text), and a bottom mode bar. The camera,
- * backend, TTS and stability-tracking logic are unchanged from before.
+ * Layout mirrors the earlier SwiftUI design: a status bar, a mode pill, a bounding-box
+ * overlay over the live preview, a guidance card (live) / OCR panel (text) and a bottom
+ * mode bar. Double tap anywhere switches modes; in text mode a single tap repeats the
+ * last text.
  */
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+class MainActivity : ComponentActivity() {
 
     // ── Business logic ────────────────────────────────────────
     private val cameraExecutor = Executors.newSingleThreadExecutor()
-    private val ocrService = OcrService(SERVER_URL)
+    private lateinit var speech: SpeechManager
+    private lateinit var haptics: HapticFeedbackManager
+    private var camera: Camera? = null
+
+    @Volatile private var currentMode = ProcessingMode.LIVE
+
+    // Camera thread only.
+    private val sceneAnalyzer = SceneAnalyzer()
     private val stabilityTracker = TextStabilityTracker()
     private val duplicateSuppressor = DuplicateTextSuppressor()
+    private var objectDetector: ObjectDetector? = null
+    private var objectDetectorFailed = false
+    private val textRecognizer by lazy { TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build()) }
+    private var lastLiveAnalysisMs = 0L
+    private var lastLiveGuideMs = 0L
+    private var displayedRiskScore = 0
+    private var displayedRiskMs = 0L
+    private var lastTextAnalysisMs = 0L
+    private var previousLuma: LumaSample? = null
+    private var lastFullOcrMs = Long.MIN_VALUE / 2
+    /** Consecutive dark text-mode frames. */
+    private var darkFrameCount = 0
+    /** The first of two close reads; digits are spoken only when the next frame reads the same. */
+    private var pendingDetail: Pair<DetailRead, Long>? = null
+    @Volatile private var isTorchOn = false
 
-    private var textToSpeech: TextToSpeech? = null
-    private var vibrator: Vibrator? = null
-
-    private var currentMode = ProcessingMode.LIVE
-    private var isProcessing = false
+    // Main thread only.
     private var latestGuide = "실시간 안내 모드가 준비되었습니다."
     private var latestDetectedText: String? = null
     private var liveOcrStatus = LiveOcrStatus.SEARCHING
-    private var latestLiveDirection = "center"
     private var latestLiveRiskScore = 0
-    private var lastLiveRequestMs = 0L
-    private var lastFullOcrRequestMs = 0L
-
-    // Bounding-box state (mirrors iOS liveBoxes / liveImageSize).
+    private var isLiveAnalysisRunning = false
+    private var isCameraDenied = false
     private var liveBoxes: List<LiveGuidanceBox> = emptyList()
     private var liveImageW = 0f
     private var liveImageH = 0f
-    @Volatile private var latestFrameW = 0f
-    @Volatile private var latestFrameH = 0f
 
     // ── UI refs ───────────────────────────────────────────────
     private lateinit var previewView: PreviewView
@@ -100,38 +129,59 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
-        textToSpeech = TextToSpeech(this, this)
+        speech = SpeechManager(this)
+        haptics = HapticFeedbackManager(this)
         buildUi()
+        // The model takes a moment to load; start before the camera is up.
+        cameraExecutor.execute { loadObjectDetectorIfNeeded() }
         if (hasCameraPermission()) startCameraWhenReady()
-        else ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-    }
-
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) configureTtsVoice()
+        else ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_REQUEST)
     }
 
     override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(req, perms, results)
-        if (req == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) startCameraWhenReady()
-        else { liveOcrStatus = LiveOcrStatus.UNAVAILABLE; renderState() }
+        if (req != CAMERA_REQUEST) return
+        if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            startCameraWhenReady()
+        } else {
+            isCameraDenied = true
+            liveOcrStatus = LiveOcrStatus.UNAVAILABLE
+            latestGuide = "이 앱을 사용하려면 카메라 권한이 필요합니다."
+            renderState()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        haptics.stopRepeatingPulses()
+        speech.stop()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        cameraExecutor.execute {
+            objectDetector?.close()
+            objectDetector = null
+            textRecognizer.close()
+        }
         cameraExecutor.shutdown()
-        textToSpeech?.stop(); textToSpeech?.shutdown()
+        haptics.stopRepeatingPulses()
+        speech.shutdown()
     }
 
     // ── UI build ──────────────────────────────────────────────
     private fun buildUi() {
-        previewView = PreviewView(this).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
+        previewView = PreviewView(this).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
         boxOverlay = BoundingBoxOverlayView(this)
 
         val root = FrameLayout(this)
         root.addView(previewView, matchParent())
         root.addView(makeVignette(), matchParent())
         root.addView(boxOverlay, matchParent())
+        root.addView(makeGestureLayer(), matchParent())
 
         val overlay = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(overlay, matchParent())
@@ -157,15 +207,42 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         renderState()
     }
 
+    /**
+     * Anyone who can't find the mode buttons can switch from anywhere on screen with a
+     * double tap; in text mode a single tap repeats the last text. Touches on the cards
+     * and buttons never reach this layer.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun makeGestureLayer(): View {
+        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                toggleMode()
+                return true
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (currentMode == ProcessingMode.TEXT) repeatLastText()
+                return true
+            }
+        })
+        return View(this).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            setOnTouchListener { _, event -> detector.onTouchEvent(event) }
+        }
+    }
+
     // Vignette: top dark → clear → bottom dark, matching iOS VignetteLayer (bg #070810).
     private fun makeVignette(): View = View(this).apply {
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(0xD1070810.toInt(), 0x2E070810, 0xEB070810.toInt())
         )
     }
 
-    // ── Status bar (GLASS) ────────────────────────────────────
+    // ── Status bar ────────────────────────────────────────────
     private fun makeStatusBar(): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -174,7 +251,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val icon = IconView(this, IconView.Type.CAMERA_VIEWFINDER).apply { setColor(C_PRIMARY) }
         row.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
         val title = TextView(this).apply {
-            text = "GLASS"
+            text = getString(R.string.app_name)
             textSize = 18f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             setTextColor(Color.WHITE)
@@ -255,6 +332,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             setPadding(dp(22), dp(22), dp(22), dp(22))
             background = glass(C_GLASS, withAlpha(C_PRIMARY, 0.25f), 24)
             elevation = dp(18).toFloat()
+            // A tap on the card, or a double tap with TalkBack, reads the text again.
+            isClickable = true
+            setOnClickListener { repeatLastText() }
         }
 
         val header = LinearLayout(this).apply {
@@ -303,9 +383,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             elevation = dp(12).toFloat()
         }
 
-        val live = makeModeButton(IconView.Type.EYE, "실시간") { setMode(ProcessingMode.LIVE) }
+        val live = makeModeButton(IconView.Type.EYE, "실시간") { switchMode(ProcessingMode.LIVE) }
         btnLive = live.first; btnLiveIcon = live.second; btnLiveLabel = live.third
-        val ocr = makeModeButton(IconView.Type.TEXT_VIEWFINDER, "문자 읽기") { setMode(ProcessingMode.TEXT) }
+        val ocr = makeModeButton(IconView.Type.TEXT_VIEWFINDER, "문자 읽기") { switchMode(ProcessingMode.TEXT) }
         btnOcr = ocr.first; btnOcrIcon = ocr.second; btnOcrLabel = ocr.third
 
         row.addView(btnLive, LinearLayout.LayoutParams(0, dp(58), 1f))
@@ -344,11 +424,23 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun renderState() {
         val isOcr = currentMode == ProcessingMode.TEXT
 
-        statusDot.background = circle(if (isOcr) C_PRIMARY else C_LIVE)
-        modeLabel.text = if (isOcr) "문자 읽기" else "보행 안내"
-        modeSpinner.visibility = if (isProcessing) View.VISIBLE else View.GONE
+        statusDot.background = circle(
+            when {
+                isCameraDenied -> C_DANGER
+                isOcr -> C_PRIMARY
+                isLiveAnalysisRunning -> C_LIVE
+                else -> C_DIM_TEXT
+            }
+        )
+        modeLabel.text = when {
+            isCameraDenied -> "카메라 권한이 필요해요"
+            isOcr -> "문자 읽기"
+            isLiveAnalysisRunning -> "주변을 살피는 중"
+            else -> "카메라 준비 중"
+        }
+        modeSpinner.visibility = if (!isOcr && !isLiveAnalysisRunning && !isCameraDenied) View.VISIBLE else View.GONE
 
-        guidanceCard.visibility = if (isOcr) View.GONE else View.VISIBLE
+        guidanceCard.visibility = if (isOcr || latestGuide.isEmpty()) View.GONE else View.VISIBLE
         ocrCard.visibility = if (isOcr) View.VISIBLE else View.GONE
 
         boxOverlay.visibility = if (isOcr) View.GONE else View.VISIBLE
@@ -368,11 +460,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
         // OCR panel
         ocrStatusLbl.text = liveOcrStatus.message
-        ocrSpinner.visibility = if (isProcessing) View.VISIBLE else View.GONE
+        ocrSpinner.visibility = if (liveOcrStatus == LiveOcrStatus.READING) View.VISIBLE else View.GONE
         val hasResult = !latestDetectedText.isNullOrBlank()
         ocrDivider.visibility = if (hasResult) View.VISIBLE else View.GONE
         ocrResultLbl.visibility = if (hasResult) View.VISIBLE else View.GONE
         ocrResultLbl.text = latestDetectedText.orEmpty()
+        ocrCard.contentDescription = if (hasResult) "${latestDetectedText}. 두 번 탭하면 다시 읽어요." else liveOcrStatus.message
 
         // Mode bar
         styleModeButton(btnLive, btnLiveIcon, btnLiveLabel, active = !isOcr)
@@ -382,6 +475,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun styleModeButton(btn: LinearLayout, icon: IconView, label: TextView, active: Boolean) {
         btn.background = rounded(if (active) C_PRIMARY else C_PILL, 16)
         btn.elevation = if (active) dp(7).toFloat() else 0f
+        btn.isSelected = active
         val tint = if (active) C_DARK else 0x99FFFFFF.toInt()
         icon.setColor(tint)
         label.setTextColor(tint)
@@ -394,162 +488,399 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     // ── Mode switching ────────────────────────────────────────
-    private fun setMode(mode: ProcessingMode) {
-        currentMode = mode
-        stabilityTracker.reset()
-        latestDetectedText = null
-        liveOcrStatus = LiveOcrStatus.SEARCHING
-        latestLiveDirection = "center"
-        latestLiveRiskScore = 0
-        liveBoxes = emptyList()
-
-        latestGuide = if (mode == ProcessingMode.LIVE) {
-            pulse(35); "실시간 보행 안내를 시작합니다."
-        } else {
-            pulse(65); "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요."
-        }
-        renderState()
-        if (mode == ProcessingMode.LIVE) speak(latestGuide)
+    private fun toggleMode() {
+        switchMode(if (currentMode == ProcessingMode.LIVE) ProcessingMode.TEXT else ProcessingMode.LIVE)
     }
 
-    // ── Camera / processing ───────────────────────────────────
+    /** A mode change the user asked for (button or double tap): confirm it with a vibration. */
+    private fun switchMode(mode: ProcessingMode) {
+        haptics.play(HapticEvent.MODE_CHANGED)
+        setMode(mode)
+    }
+
+    private fun setMode(mode: ProcessingMode) {
+        currentMode = mode
+        // Text mode turns it back on if the page is still dark.
+        setTorch(false)
+        speech.clearPendingGuidance()
+        cameraExecutor.execute {
+            sceneAnalyzer.reset()
+            stabilityTracker.reset()
+            pendingDetail = null
+            darkFrameCount = 0
+            lastLiveGuideMs = SystemClock.elapsedRealtime()
+            displayedRiskScore = 0
+        }
+
+        latestDetectedText = null
+        liveOcrStatus = LiveOcrStatus.SEARCHING
+        latestLiveRiskScore = 0
+        liveBoxes = emptyList()
+        val message = when (mode) {
+            ProcessingMode.LIVE -> {
+                isLiveAnalysisRunning = false
+                haptics.stopRepeatingPulses()
+                "실시간 보행 안내를 시작합니다." + modeSwitchHint("문자 읽기")
+            }
+            ProcessingMode.TEXT -> {
+                haptics.updateOcrPulseState(OcrHapticPulseState.SEARCHING)
+                "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요." +
+                    modeSwitchHint("실시간 안내", repeatHint = "화면을 한 번 누르면 읽은 문자를 다시 읽습니다.")
+            }
+        }
+
+        // Always announce the new mode: users who can't see the screen need to hear which one is on.
+        updateResponse(message, detectedText = null, shouldSpeak = true)
+    }
+
+    /**
+     * Explains the switch gesture in the first few mode announcements, until it has likely
+     * been learned. TalkBack users switch with the mode buttons, which TalkBack reads out.
+     */
+    private fun modeSwitchHint(target: String, repeatHint: String? = null): String {
+        val accessibility = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        if (accessibility.isTouchExplorationEnabled) return ""
+
+        val preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+        val count = preferences.getInt(MODE_SWITCH_HINT_COUNT, 0)
+        if (count >= 3) return ""
+
+        preferences.edit().putInt(MODE_SWITCH_HINT_COUNT, count + 1).apply()
+        return " 화면을 두 번 누르면 ${target}로 바뀝니다." + (repeatHint?.let { " $it" } ?: "")
+    }
+
+    // ── Camera ────────────────────────────────────────────────
     private fun startCameraWhenReady() {
         previewView.post { startCamera() }
     }
 
     private fun startCamera() {
-        val fut = ProcessCameraProvider.getInstance(this)
-        fut.addListener({
-            val cp = fut.get()
-            val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            val provider = future.get()
+            // 16:9 like the iPhone's 1920x1080 frames; 720p keeps small print readable.
+            val resolution = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                )
+                .build()
+            val preview = Preview.Builder()
+                .setResolutionSelector(resolution)
+                .build()
+                .also { it.setSurfaceProvider(previewView.surfaceProvider) }
             val analysis = ImageAnalysis.Builder()
+                .setResolutionSelector(resolution)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build().also { it.setAnalyzer(cameraExecutor, FrameAnalyzer()) }
-            cp.unbindAll()
+                .build()
+                .also { it.setAnalyzer(cameraExecutor) { image -> analyzeFrame(image) } }
+            provider.unbindAll()
             val viewPort = previewView.viewPort
-            if (viewPort != null) {
+            camera = if (viewPort != null) {
                 val useCases = UseCaseGroup.Builder()
                     .setViewPort(viewPort)
                     .addUseCase(preview)
                     .addUseCase(analysis)
                     .build()
-                cp.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, useCases)
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, useCases)
             } else {
-                cp.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
             }
+            isTorchOn = false
             setMode(currentMode)
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun processImage(bmp: android.graphics.Bitmap, mode: ProcessingMode, allowDup: Boolean) {
-        if (isProcessing) return
-        isProcessing = true
-        runOnUiThread { renderState() }
-        thread(name = "backend") {
-            val resp = ocrService.analyze(bmp, mode)
-            if (currentMode != mode) { isProcessing = false; runOnUiThread { renderState() }; return@thread }
-            val speak = shouldSpeak(resp, mode, allowDup)
-            if (speak && mode == ProcessingMode.TEXT) pulse(90)
-            runOnUiThread {
-                updateResponse(resp)
-                isProcessing = false
-                if (mode == ProcessingMode.TEXT) {
-                    liveOcrStatus = if (resp.status == "error") LiveOcrStatus.SEARCHING else LiveOcrStatus.COOLING_DOWN
-                    if (resp.status == "error") pulse(35) else if (!speak) pulse(45)
-                }
-                renderState()
+    private fun setTorch(on: Boolean) {
+        val camera = camera ?: return
+        if (!camera.cameraInfo.hasFlashUnit() || isTorchOn == on) return
+        isTorchOn = on
+        camera.cameraControl.enableTorch(on)
+    }
+
+    /** Runs on the camera thread; frames that arrive meanwhile are dropped. */
+    private fun analyzeFrame(image: ImageProxy) {
+        try {
+            when (currentMode) {
+                ProcessingMode.LIVE -> analyzeLiveFrame(image)
+                ProcessingMode.TEXT -> analyzeTextFrame(image)
             }
-            if (speak) speak(resp.voiceGuide)
+        } catch (exception: Exception) {
+            // Skip this frame; the next one retries.
+            Log.w(TAG, "Frame analysis failed", exception)
+        } finally {
+            image.close()
         }
     }
 
-    private fun shouldSpeak(r: AnalysisResponse, m: ProcessingMode, allowDup: Boolean): Boolean {
-        if (m == ProcessingMode.LIVE) return true
-        if (r.status == "error") return true
-        val t = r.detectedText
-        return if (t.isNullOrBlank()) allowDup else allowDup || duplicateSuppressor.shouldSpeak(t)
+    // ── Live guidance (on-device YOLO) ────────────────────────
+    private fun analyzeLiveFrame(image: ImageProxy) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastLiveAnalysisMs < LIVE_ANALYSIS_INTERVAL_MS) return
+        lastLiveAnalysisMs = now
+
+        val detector = loadObjectDetectorIfNeeded() ?: return
+        val frame = ImageProxyBitmapConverter.toUprightBitmap(image, cropToViewport = true)
+        val width = frame.width
+        val height = frame.height
+        val pixels = IntArray(width * height)
+        frame.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        val detections = detector.detect(pixels, width, height)
+        if (currentMode != ProcessingMode.LIVE) return
+        val result = sceneAnalyzer.analyze(detections, width.toDouble(), height.toDouble(), now / 1000.0)
+        publishLiveResult(result, width, height, now)
     }
 
-    private fun updateResponse(response: AnalysisResponse) {
-        latestGuide = response.voiceGuide.ifBlank { latestGuide }
-        latestDetectedText = response.detectedText
+    private fun loadObjectDetectorIfNeeded(): ObjectDetector? {
+        objectDetector?.let { return it }
+        if (objectDetectorFailed) return null
 
-        if (response.mode == ProcessingMode.LIVE.wireName && response.status != "error") {
-            val primaryDetection = response.detections?.firstOrNull()
-            latestLiveDirection = primaryDetection?.position ?: "center"
-            latestLiveRiskScore = primaryDetection?.riskScore ?: 0
-            liveImageW = latestFrameW
-            liveImageH = latestFrameH
-            liveBoxes = makeLiveBoxes(response.detections, latestFrameW, latestFrameH)
-        } else if (response.mode == ProcessingMode.LIVE.wireName) {
-            latestLiveDirection = "center"
-            latestLiveRiskScore = 0
-            liveBoxes = emptyList()
+        return try {
+            val modelBytes = assets.open(ObjectDetector.MODEL_ASSET).use { it.readBytes() }
+            ObjectDetector(modelBytes, threads = DETECTOR_THREADS).also { objectDetector = it }
+        } catch (exception: Exception) {
+            objectDetectorFailed = true
+            Log.e(TAG, "Object detector unavailable", exception)
+            updateResponse("비전 모델을 사용할 수 없습니다.", detectedText = null, shouldSpeak = true)
+            null
         }
     }
 
-    /// Builds bounding boxes for the highest-risk detections (mirrors iOS makeLiveBoxes):
-    /// keep objects with a valid 4-value bbox, sort by risk desc, take the top 2.
-    private fun makeLiveBoxes(detections: List<DetectionResponse>?, w: Float, h: Float): List<LiveGuidanceBox> {
-        if (detections == null || w <= 0f || h <= 0f) return emptyList()
-        return detections
-            .filter { (it.riskScore ?: 0) >= LIVE_BOX_MIN_RISK && (it.bboxXyxy?.size ?: 0) == 4 }
-            .sortedByDescending { it.riskScore ?: 0 }
-            .take(LIVE_BOX_MAX_COUNT)
-            .mapNotNull { d ->
-                val bb = d.bboxXyxy ?: return@mapNotNull null
-                if (bb.size != 4) return@mapNotNull null
-                val x1 = minOf(bb[0], bb[2]); val y1 = minOf(bb[1], bb[3])
-                val x2 = maxOf(bb[0], bb[2]); val y2 = maxOf(bb[1], bb[3])
-                val left = (x1 / w).toFloat().coerceIn(0f, 1f)
-                val top = (y1 / h).toFloat().coerceIn(0f, 1f)
-                val right = (x2 / w).toFloat().coerceIn(0f, 1f)
-                val bottom = (y2 / h).toFloat().coerceIn(0f, 1f)
-                if (right - left <= 0f || bottom - top <= 0f) return@mapNotNull null
-                LiveGuidanceBox(
-                    rect = RectRatio(left, top, right, bottom),
-                    riskScore = d.riskScore ?: 0,
-                    label = d.koreanLabel ?: d.label
-                )
-            }
-    }
-
-    private fun updateLiveOcrStatus(s: LiveOcrStatus) {
-        if (currentMode != ProcessingMode.TEXT || (isProcessing && s != LiveOcrStatus.READING)) return
-        val changed = liveOcrStatus != s
-        liveOcrStatus = s
-        if (latestDetectedText.isNullOrBlank()) latestGuide = s.message
-        if (changed && !isProcessing) {
-            when (s) {
-                LiveOcrStatus.DETECTED -> pulse(35)
-                LiveOcrStatus.STABILIZING -> pulse(24)
-                LiveOcrStatus.SEARCHING, LiveOcrStatus.COOLING_DOWN -> pulse(18)
-                LiveOcrStatus.READING, LiveOcrStatus.UNAVAILABLE -> Unit
-            }
+    private fun publishLiveResult(result: LiveSceneResult, frameWidth: Int, frameHeight: Int, now: Long) {
+        val hasNewGuide = result.voiceGuide.isNotEmpty()
+        if (hasNewGuide) lastLiveGuideMs = now
+        val shouldClearGuide = !hasNewGuide && now - lastLiveGuideMs > LIVE_GUIDE_DISPLAY_MS
+        // Ranked by what is shown, so a capped object beside the path never hides one in it.
+        val shown = result.detections.sortedByDescending { GuidanceRules.displayRisk(it) }
+        val boxes = makeLiveBoxes(shown, frameWidth.toDouble(), frameHeight.toDouble())
+        val riskScore = shown.firstOrNull()?.let { GuidanceRules.displayRisk(it) } ?: 0
+        if (riskScore >= displayedRiskScore || now - displayedRiskMs > RISK_DISPLAY_HOLD_MS) {
+            displayedRiskScore = riskScore
+            displayedRiskMs = now
         }
-        runOnUiThread { renderState() }
-    }
+        val displayedRisk = displayedRiskScore
 
-    private fun speak(message: String) {
-        if (message.isBlank()) return
         runOnUiThread {
-            textToSpeech?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "guide-${System.currentTimeMillis()}")
+            if (currentMode != ProcessingMode.LIVE) return@runOnUiThread
+            isLiveAnalysisRunning = true
+            if (hasNewGuide) latestGuide = result.voiceGuide
+            else if (shouldClearGuide) latestGuide = ""
+            latestLiveRiskScore = displayedRisk
+            liveImageW = frameWidth.toFloat()
+            liveImageH = frameHeight.toFloat()
+            liveBoxes = boxes
+            renderState()
+        }
+
+        if (hasNewGuide && currentMode == ProcessingMode.LIVE) {
+            speech.speakGuidance(result.voiceGuide, result.voiceUrgency)
         }
     }
 
-    private fun configureTtsVoice() {
-        textToSpeech?.apply {
-            language = Locale.KOREAN
-            setSpeechRate(0.92f); setPitch(1.04f)
-            voices?.filter { it.locale.language == Locale.KOREAN.language }
-                ?.filterNot { it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true }
-                ?.sortedWith(compareByDescending<Voice> { it.quality }.thenBy { it.latency })
-                ?.firstOrNull()?.let { voice = it }
+    /**
+     * Only the most important object is highlighted, so low-vision users see one clear
+     * target instead of a cluttered detector overlay. Boxes are normalized to the frame.
+     */
+    private fun makeLiveBoxes(detections: List<SceneDetection>, width: Double, height: Double): List<LiveGuidanceBox> {
+        if (width <= 0 || height <= 0) return emptyList()
+        return detections.take(LIVE_BOX_MAX_COUNT).map { detection ->
+            LiveGuidanceBox(
+                rect = RectRatio(
+                    (detection.bbox.x1 / width).toFloat(),
+                    (detection.bbox.y1 / height).toFloat(),
+                    (detection.bbox.x2 / width).toFloat(),
+                    (detection.bbox.y2 / height).toFloat()
+                ),
+                riskScore = GuidanceRules.displayRisk(detection),
+                label = detection.koreanLabel,
+                positionLabel = detection.position.koreanName
+            )
         }
     }
 
-    private fun pulse(ms: Long) {
-        vibrator?.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+    // ── Text reading (on-device ML Kit OCR) ───────────────────
+    @OptIn(ExperimentalGetImage::class)
+    private fun analyzeTextFrame(image: ImageProxy) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastTextAnalysisMs < TEXT_ANALYSIS_INTERVAL_MS) return
+        val mediaImage = image.image ?: return
+        lastTextAnalysisMs = now
+
+        val rotation = image.imageInfo.rotationDegrees
+        val sample = ImageProxyBitmapConverter.lumaSample(image)
+        val movement = sample.movementScore(previousLuma)
+        previousLuma = sample
+
+        val text = Tasks.await(textRecognizer.process(InputImage.fromMediaImage(mediaImage, rotation)))
+        val sideways = rotation % 180 != 0
+        val lines = ocrLines(text, if (sideways) image.height else image.width, if (sideways) image.width else image.height)
+        val region = OcrText.textRegion(lines)
+        val analysis = OcrFrameAnalysis(
+            textRegion = region,
+            confidence = lines.filter { it.confidence >= OcrText.MINIMUM_REGION_CONFIDENCE }.maxOfOrNull { it.confidence } ?: 0f,
+            blurScore = sample.blurScore(),
+            movementScore = movement,
+            brightness = sample.brightness,
+            glareRatio = region?.let { sample.glareRatio(it, rotation) } ?: 0.0,
+            timestampMs = now,
+            readableLines = OcrText.readableLines(lines)
+        )
+        if (currentMode != ProcessingMode.TEXT) return
+
+        pendingDetail?.let { (first, readAt) ->
+            pendingDetail = null
+            // A read left over from before a mode switch is stale.
+            if (now - readAt < 1_000L) {
+                val second = readDetail(image, analysis) ?: DetailRead.EMPTY
+                speakDetail(first.confirmedBy(second))
+                return
+            }
+        }
+
+        val decision = stabilityTracker.update(analysis)
+        updateLiveOcrStatus(decision.status)
+        decision.hint?.let { speech.speakGuidance(it.message, RiskLevel.LOW) }
+        lightUpIfDark(analysis)
+
+        if (!decision.shouldRunFullOcr) return
+        if (now - lastFullOcrMs < FULL_OCR_COOLDOWN_MS) {
+            updateLiveOcrStatus(LiveOcrStatus.COOLING_DOWN)
+            return
+        }
+
+        lastFullOcrMs = now
+        haptics.stopRepeatingPulses()
+        val detail = readDetail(image, analysis)
+        if (detail != null && (detail.lines.isNotEmpty() || detail.droppedNumberLines > 0)) {
+            pendingDetail = detail to now
+        } else {
+            readText(analysis.readableText)
+        }
+    }
+
+    /** Recognized lines normalized to the upright frame (`width` x `height`). */
+    private fun ocrLines(text: Text, width: Int, height: Int): List<OcrLine> {
+        if (width <= 0 || height <= 0) return emptyList()
+        return text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
+            val box = line.boundingBox ?: return@mapNotNull null
+            OcrLine(
+                text = line.text,
+                box = RectRatio(
+                    (box.left.toFloat() / width).coerceIn(0f, 1f),
+                    (box.top.toFloat() / height).coerceIn(0f, 1f),
+                    (box.right.toFloat() / width).coerceIn(0f, 1f),
+                    (box.bottom.toFloat() / height).coerceIn(0f, 1f)
+                ),
+                confidence = line.confidence
+            )
+        }
+    }
+
+    /**
+     * Reads the text region again from a crop around it, enlarged so small print gets more
+     * of the recognizer's resolution. Null when there is no text region.
+     */
+    private fun readDetail(image: ImageProxy, analysis: OcrFrameAnalysis): DetailRead? {
+        val region = analysis.textRegion ?: return null
+        val frame = ImageProxyBitmapConverter.toUprightBitmap(image, cropToViewport = false)
+        val left = ((region.left - DETAIL_MARGIN).coerceIn(0f, 1f) * frame.width).toInt()
+        val top = ((region.top - DETAIL_MARGIN).coerceIn(0f, 1f) * frame.height).toInt()
+        val right = ((region.right + DETAIL_MARGIN).coerceIn(0f, 1f) * frame.width).toInt()
+        val bottom = ((region.bottom + DETAIL_MARGIN).coerceIn(0f, 1f) * frame.height).toInt()
+        if (right - left < 8 || bottom - top < 8) return null
+
+        var crop = Bitmap.createBitmap(frame, left, top, right - left, bottom - top)
+        val scale = min(DETAIL_MAX_SCALE, DETAIL_TARGET_SIZE / max(crop.width, crop.height).toFloat())
+        if (scale > 1.05f) {
+            crop = Bitmap.createScaledBitmap(crop, (crop.width * scale).toInt(), (crop.height * scale).toInt(), true)
+        }
+        val text = Tasks.await(textRecognizer.process(InputImage.fromBitmap(crop, 0)))
+        return OcrText.detailRead(ocrLines(text, crop.width, crop.height))
+    }
+
+    // shortcut: the torch stays on until the mode changes, since a lit page always looks bright.
+    private fun lightUpIfDark(analysis: OcrFrameAnalysis) {
+        darkFrameCount = if (analysis.brightness < DARK_BRIGHTNESS) darkFrameCount + 1 else 0
+        if (darkFrameCount < 5 || isTorchOn || currentMode != ProcessingMode.TEXT) return
+        if (camera?.cameraInfo?.hasFlashUnit() != true) return
+
+        runOnUiThread { if (currentMode == ProcessingMode.TEXT) setTorch(true) }
+        speech.speakGuidance("어두워서 불을 켰어요.", RiskLevel.LOW)
+    }
+
+    /** Reads the last text again, even though it was already spoken. */
+    private fun repeatLastText() {
+        if (currentMode != ProcessingMode.TEXT) return
+        haptics.stopRepeatingPulses()
+        speech.speak(latestDetectedText?.takeIf { it.isNotEmpty() } ?: "아직 읽은 문자가 없습니다.") {
+            if (currentMode == ProcessingMode.TEXT) haptics.updateOcrPulseState(OcrHapticPulseState.SEARCHING)
+        }
+    }
+
+    private fun speakDetail(read: DetailRead) {
+        val notes = ArrayList<String>()
+        if (read.droppedNumberLines > 0) {
+            notes.add(
+                if (read.lines.isEmpty()) "숫자가 있는 글자를 확실히 읽지 못했습니다. 휴대폰을 움직이지 말고 다시 비춰 주세요."
+                else "숫자가 확실하지 않은 줄은 빼고 읽었습니다."
+            )
+        }
+        if (read.missedLines > 0) notes.add("일부 글자는 읽지 못했습니다.")
+        readText(read.lines.joinToString(" "), notes.joinToString(" "))
+    }
+
+    private fun readText(detectedText: String, notes: String = "") {
+        // Only the text itself: the mode was announced when it started.
+        val voiceGuide = if (detectedText.isEmpty() && notes.isEmpty()) {
+            "현재 화면에서 읽을 수 있는 문자를 찾지 못했습니다."
+        } else {
+            listOf(detectedText, notes).filter { it.isNotEmpty() }.joinToString(" ")
+        }
+        val shouldSpeak = if (detectedText.isEmpty()) notes.isNotEmpty() else duplicateSuppressor.shouldSpeak(detectedText)
+
+        if (shouldSpeak) {
+            haptics.stopRepeatingPulses()
+            haptics.play(HapticEvent.READABLE_TEXT_CONFIRMED)
+        }
+        updateResponse(voiceGuide, detectedText, shouldSpeak)
+
+        runOnUiThread {
+            if (currentMode != ProcessingMode.TEXT) return@runOnUiThread
+            liveOcrStatus = LiveOcrStatus.COOLING_DOWN
+            if (!shouldSpeak) haptics.updateOcrPulseState(OcrHapticPulseState.SEARCHING)
+            renderState()
+        }
+    }
+
+    private fun updateResponse(voiceGuide: String, detectedText: String?, shouldSpeak: Boolean) {
+        runOnUiThread {
+            latestGuide = voiceGuide
+            latestDetectedText = detectedText
+            renderState()
+        }
+
+        if (!shouldSpeak) return
+        haptics.stopRepeatingPulses()
+        speech.speak(voiceGuide) {
+            if (currentMode == ProcessingMode.TEXT) haptics.updateOcrPulseState(OcrHapticPulseState.SEARCHING)
+        }
+    }
+
+    private fun updateLiveOcrStatus(status: LiveOcrStatus) {
+        runOnUiThread {
+            if (currentMode != ProcessingMode.TEXT) return@runOnUiThread
+            liveOcrStatus = status
+            if (latestDetectedText.isNullOrEmpty()) latestGuide = status.message
+
+            when (status) {
+                LiveOcrStatus.SEARCHING, LiveOcrStatus.COOLING_DOWN -> haptics.updateOcrPulseState(OcrHapticPulseState.SEARCHING)
+                LiveOcrStatus.DETECTED -> haptics.updateOcrPulseState(OcrHapticPulseState.DETECTED)
+                LiveOcrStatus.STABILIZING -> haptics.updateOcrPulseState(OcrHapticPulseState.STABILIZING)
+                LiveOcrStatus.READING, LiveOcrStatus.UNAVAILABLE -> haptics.stopRepeatingPulses()
+            }
+            renderState()
+        }
     }
 
     private fun hasCameraPermission() =
@@ -602,83 +933,34 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         return (color and 0x00FFFFFF) or (a shl 24)
     }
 
-    // ── FrameAnalyzer (unchanged logic) ───────────────────────
-    private inner class FrameAnalyzer : ImageAnalysis.Analyzer {
-        private val recognizer = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-        private var isAnalyzing = false
-        private var lastAnalysisMs = 0L
-        private var prevLuma: List<Double>? = null
-
-        @OptIn(ExperimentalGetImage::class)
-        override fun analyze(proxy: ImageProxy) {
-            when (currentMode) { ProcessingMode.LIVE -> live(proxy); ProcessingMode.TEXT -> text(proxy) }
-        }
-
-        private fun live(proxy: ImageProxy) {
-            val now = System.currentTimeMillis()
-            if (isProcessing || now - lastLiveRequestMs < 2_000L) { proxy.close(); return }
-            val bmp = ImageProxyBitmapConverter.toBitmap(proxy); proxy.close()
-            if (bmp == null) return
-            lastLiveRequestMs = now
-            latestFrameW = bmp.width.toFloat()
-            latestFrameH = bmp.height.toFloat()
-            processImage(bmp, ProcessingMode.LIVE, true)
-        }
-
-        @OptIn(ExperimentalGetImage::class)
-        private fun text(proxy: ImageProxy) {
-            val now = System.currentTimeMillis()
-            val img = proxy.image
-            if (img == null || isAnalyzing || now - lastAnalysisMs < 160L) { proxy.close(); return }
-            isAnalyzing = true; lastAnalysisMs = now
-            val sample = ImageProxyBitmapConverter.lumaSample(proxy)
-            val blur = blurScore(sample)
-            val move = moveScore(sample)
-            prevLuma = sample
-            val input = InputImage.fromMediaImage(img, proxy.imageInfo.rotationDegrees)
-            recognizer.process(input)
-                .addOnSuccessListener { res ->
-                    val analysis = frameAnalysis(res, proxy.width, proxy.height, blur, move)
-                    val decision = stabilityTracker.update(analysis)
-                    updateLiveOcrStatus(decision.status)
-                    if (decision.shouldRunFullOcr && currentMode == ProcessingMode.TEXT && !isProcessing) {
-                        if (now - lastFullOcrRequestMs >= 3_000L) {
-                            val bmp = ImageProxyBitmapConverter.toBitmap(proxy)
-                            lastFullOcrRequestMs = now
-                            if (bmp != null) { liveOcrStatus = LiveOcrStatus.READING; processImage(bmp, ProcessingMode.TEXT, false) }
-                        } else updateLiveOcrStatus(LiveOcrStatus.COOLING_DOWN)
-                    }
-                }
-                .addOnCompleteListener { isAnalyzing = false; proxy.close() }
-        }
-
-        private fun frameAnalysis(t: Text, w: Int, h: Int, blur: Double, move: Double): OcrFrameAnalysis {
-            val boxes = t.textBlocks.mapNotNull { it.boundingBox }
-            val region = boxes.reduceOrNull { a, b ->
-                android.graphics.Rect(minOf(a.left, b.left), minOf(a.top, b.top), maxOf(a.right, b.right), maxOf(a.bottom, b.bottom))
-            }?.let { RectRatio(it.left.toFloat() / w, it.top.toFloat() / h, it.right.toFloat() / w, it.bottom.toFloat() / h) }
-            return OcrFrameAnalysis(region, if (boxes.isEmpty()) 0f else 0.8f, blur, move, System.currentTimeMillis())
-        }
-
-        private fun blurScore(s: List<Double>): Double {
-            if (s.isEmpty()) return 0.0; val c = 24; var e = 0.0; var n = 0
-            s.indices.forEach { i ->
-                if (i % c != c - 1) { e += abs(s[i] - s[i + 1]); n++ }
-                val j = i + c; if (j < s.size) { e += abs(s[i] - s[j]); n++ }
-            }
-            return if (n == 0) 0.0 else e / n
-        }
-
-        private fun moveScore(cur: List<Double>): Double {
-            val p = prevLuma; return if (p == null || p.size != cur.size) 0.0
-            else p.zip(cur).sumOf { abs(it.first - it.second) } / cur.size
-        }
-    }
-
     companion object {
-        private const val SERVER_URL = "http://100.64.174.44:8000/analyze"
-        private const val LIVE_BOX_MIN_RISK = 0
-        private const val LIVE_BOX_MAX_COUNT = 2
+        private const val TAG = "Gilnun"
+        private const val CAMERA_REQUEST = 10
+        private const val PREFERENCES = "gilnun"
+        private const val MODE_SWITCH_HINT_COUNT = "modeSwitchHintCount"
+
+        /** About five detector runs per second at most: fast enough to track approaching objects. */
+        private const val LIVE_ANALYSIS_INTERVAL_MS = 200L
+        private const val DETECTOR_THREADS = 4
+
+        /** How long a spoken live message stays on the guidance card. */
+        private const val LIVE_GUIDE_DISPLAY_MS = 3_000L
+
+        /**
+         * A higher risk stays on screen this long after it was last seen, so the card color
+         * doesn't flicker when a score hovers around a threshold.
+         */
+        private const val RISK_DISPLAY_HOLD_MS = 1_500L
+        private const val LIVE_BOX_MAX_COUNT = 1
+
+        private const val TEXT_ANALYSIS_INTERVAL_MS = 160L
+        private const val FULL_OCR_COOLDOWN_MS = 3_000L
+
+        /** Frames this dark mean auto exposure has run out, so text mode lights the page. */
+        private const val DARK_BRIGHTNESS = 45.0
+        private const val DETAIL_MARGIN = 0.05f
+        private const val DETAIL_TARGET_SIZE = 1600f
+        private const val DETAIL_MAX_SCALE = 2.5f
 
         // Palette (mirrors iOS `P`).
         private val C_PRIMARY = 0xFF45B8FF.toInt()

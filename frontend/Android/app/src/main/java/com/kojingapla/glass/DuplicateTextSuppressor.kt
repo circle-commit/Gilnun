@@ -2,7 +2,7 @@ package com.kojingapla.glass
 
 class DuplicateTextSuppressor {
     private var lastNormalizedText = ""
-    private var lastSpokenMs = 0L
+    private var lastSpokenMs = Long.MIN_VALUE / 2
     private val cooldownMs = 8_000L
 
     fun shouldSpeak(text: String, nowMs: Long = System.currentTimeMillis()): Boolean {
@@ -11,10 +11,13 @@ class DuplicateTextSuppressor {
 
         if (isDuplicate(normalized, lastNormalizedText)) return false
 
+        // Shortly after speaking, a partial re-read of the same text stays quiet. New text that
+        // only shares a common word (such as a page turn) is still read.
         if (nowMs - lastSpokenMs < cooldownMs) {
             val previousWords = lastNormalizedText.split(" ").filter { it.isNotEmpty() }.toSet()
             val newWords = normalized.split(" ").filter { it.isNotEmpty() }.toSet()
-            if (previousWords.intersect(newWords).isNotEmpty()) return false
+            val overlap = previousWords.intersect(newWords).size
+            if (overlap >= minOf(previousWords.size, newWords.size) * 0.5) return false
         }
 
         lastNormalizedText = normalized

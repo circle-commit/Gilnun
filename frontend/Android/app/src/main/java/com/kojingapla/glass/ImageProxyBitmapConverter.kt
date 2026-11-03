@@ -1,114 +1,49 @@
 package com.kojingapla.glass
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
 import androidx.camera.core.ImageProxy
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 
 object ImageProxyBitmapConverter {
-    fun toBitmap(image: ImageProxy): Bitmap? {
-        val nv21 = yuv420ToNv21(image)
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
-        val jpegBytes = ByteArrayOutputStream().use { stream ->
-            yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 90, stream)
-            stream.toByteArray()
-        }
-        val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size) ?: return null
-        val cropped = cropToViewport(bitmap, image.cropRect)
-        val rotation = image.imageInfo.rotationDegrees
-        if (rotation == 0) return cropped
+    /**
+     * The frame turned upright, as the user holds the phone. With `cropToViewport` it is
+     * limited to what the preview shows, so detection boxes line up with the screen.
+     */
+    fun toUprightBitmap(image: ImageProxy, cropToViewport: Boolean): Bitmap {
+        val bitmap = image.toBitmap()
+        val crop = image.cropRect
+        val useCrop = cropToViewport && bitmap.width == image.width && bitmap.height == image.height &&
+            !crop.isEmpty && (crop.width() != bitmap.width || crop.height() != bitmap.height)
+        val left = if (useCrop) crop.left.coerceIn(0, bitmap.width - 1) else 0
+        val top = if (useCrop) crop.top.coerceIn(0, bitmap.height - 1) else 0
+        val width = if (useCrop) crop.width().coerceIn(1, bitmap.width - left) else bitmap.width
+        val height = if (useCrop) crop.height().coerceIn(1, bitmap.height - top) else bitmap.height
 
+        val rotation = image.imageInfo.rotationDegrees
+        if (rotation == 0 && !useCrop) return bitmap
         val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-        return Bitmap.createBitmap(cropped, 0, 0, cropped.width, cropped.height, matrix, true)
+        return Bitmap.createBitmap(bitmap, left, top, width, height, matrix, true)
     }
 
-    fun lumaSample(image: ImageProxy, columns: Int = 24, rows: Int = 32): List<Double> {
-        val plane = image.planes.firstOrNull() ?: return emptyList()
+    /** A coarse luma grid from the sensor-oriented Y plane (see `LumaSample`). */
+    fun lumaSample(image: ImageProxy): LumaSample {
+        val columns = LumaSample.COLUMNS
+        val rows = LumaSample.ROWS
+        val plane = image.planes.firstOrNull() ?: return LumaSample(DoubleArray(0))
         val buffer = plane.buffer.duplicate()
         val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
         val width = image.width
         val height = image.height
-        val values = ArrayList<Double>(columns * rows)
+        val values = DoubleArray(columns * rows)
 
         for (row in 0 until rows) {
             val y = (row * height / rows).coerceIn(0, height - 1)
             for (column in 0 until columns) {
                 val x = (column * width / columns).coerceIn(0, width - 1)
-                values.add(buffer.get(y * rowStride + x).unsignedInt().toDouble())
+                values[row * columns + column] = (buffer.get(y * rowStride + x * pixelStride).toInt() and 0xFF).toDouble()
             }
         }
-
-        return values
+        return LumaSample(values)
     }
-
-    private fun yuv420ToNv21(image: ImageProxy): ByteArray {
-        val width = image.width
-        val height = image.height
-        val yPlane = image.planes[0]
-        val uPlane = image.planes[1]
-        val vPlane = image.planes[2]
-        val nv21 = ByteArray(width * height * 3 / 2)
-
-        var outputOffset = 0
-        copyPlane(
-            buffer = yPlane.buffer.duplicate(),
-            width = width,
-            height = height,
-            rowStride = yPlane.rowStride,
-            pixelStride = yPlane.pixelStride,
-            output = nv21,
-            outputOffset = outputOffset,
-            outputPixelStride = 1
-        )
-        outputOffset += width * height
-
-        val uBuffer = uPlane.buffer.duplicate()
-        val vBuffer = vPlane.buffer.duplicate()
-        val chromaWidth = width / 2
-        val chromaHeight = height / 2
-        for (row in 0 until chromaHeight) {
-            for (column in 0 until chromaWidth) {
-                val vIndex = row * vPlane.rowStride + column * vPlane.pixelStride
-                val uIndex = row * uPlane.rowStride + column * uPlane.pixelStride
-                nv21[outputOffset++] = vBuffer.get(vIndex)
-                nv21[outputOffset++] = uBuffer.get(uIndex)
-            }
-        }
-        return nv21
-    }
-
-    private fun cropToViewport(bitmap: Bitmap, cropRect: Rect): Bitmap {
-        val left = cropRect.left.coerceIn(0, bitmap.width - 1)
-        val top = cropRect.top.coerceIn(0, bitmap.height - 1)
-        val right = cropRect.right.coerceIn(left + 1, bitmap.width)
-        val bottom = cropRect.bottom.coerceIn(top + 1, bitmap.height)
-        if (left == 0 && top == 0 && right == bitmap.width && bottom == bitmap.height) return bitmap
-        return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-    }
-
-    private fun copyPlane(
-        buffer: ByteBuffer,
-        width: Int,
-        height: Int,
-        rowStride: Int,
-        pixelStride: Int,
-        output: ByteArray,
-        outputOffset: Int,
-        outputPixelStride: Int
-    ) {
-        var offset = outputOffset
-        for (row in 0 until height) {
-            for (column in 0 until width) {
-                output[offset] = buffer.get(row * rowStride + column * pixelStride)
-                offset += outputPixelStride
-            }
-        }
-    }
-
-    private fun Byte.unsignedInt(): Int = toInt() and 0xFF
 }
