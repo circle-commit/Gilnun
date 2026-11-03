@@ -10,7 +10,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Runs the bundled sidewalk YOLO model (`assets/sidewalk_detector.onnx`) on camera frames.
+ * Runs the bundled sidewalk YOLO model (see `DetectorModel`) on camera frames.
  *
  * Android counterpart of iOS `ObjectDetector.swift`. Frames are letterboxed the way
  * Ultralytics does it (scale to fit with bilinear filtering, centered, gray padding),
@@ -214,7 +214,6 @@ class ObjectDetector(modelBytes: ByteArray, threads: Int = 4) : AutoCloseable {
     private fun clamp(value: Double, upperBound: Double): Double = max(0.0, min(upperBound, value))
 
     companion object {
-        const val MODEL_ASSET = "sidewalk_detector.onnx"
         private const val PAD_VALUE = 114f / 255f
 
         /** Reads class names from the export metadata, e.g. "{0: 'person', 1: 'car', ...}". */

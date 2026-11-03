@@ -1,6 +1,7 @@
 package com.kojingapla.glass
 
 import android.Manifest
+import android.app.AlertDialog
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
@@ -76,6 +77,7 @@ class MainActivity : ComponentActivity() {
     private val stabilityTracker = TextStabilityTracker()
     private val duplicateSuppressor = DuplicateTextSuppressor()
     private var objectDetector: ObjectDetector? = null
+    @Volatile private var detectorModel = DetectorModel.ACCURATE
     private var objectDetectorFailed = false
     private val textRecognizer by lazy { TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build()) }
     private var lastLiveAnalysisMs = 0L
@@ -132,6 +134,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         speech = SpeechManager(this)
         haptics = HapticFeedbackManager(this)
+        detectorModel = DetectorModel.fromName(getSharedPreferences(PREFERENCES, MODE_PRIVATE).getString(DETECTOR_MODEL, null))
         buildUi()
         // The model takes a moment to load; start before the camera is up.
         cameraExecutor.execute { loadObjectDetectorIfNeeded() }
@@ -259,7 +262,50 @@ class MainActivity : ComponentActivity() {
             setPadding(dp(10), 0, 0, 0)
         }
         row.addView(title)
+        row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))   // Spacer
+
+        val settings = TextView(this).apply {
+            text = "설정"
+            textSize = 15f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), 0, dp(14), 0)
+            background = capsule(C_PILL, C_GLASS_STROKE, 16)
+            isClickable = true
+            isFocusable = true
+            contentDescription = "설정"
+            setOnClickListener { showSettings() }
+        }
+        row.addView(settings, LinearLayout.LayoutParams(WRAP, dp(34)))
         return row
+    }
+
+    /** Picks the detector model: the float one, or the int8 one that runs about twice as fast. */
+    private fun showSettings() {
+        val models = DetectorModel.entries
+        val labels = models.map { "${it.title}\n${it.summary}" }.toTypedArray()
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("탐지 모델")
+            .setSingleChoiceItems(labels, models.indexOf(detectorModel)) { dialog, which ->
+                dialog.dismiss()
+                selectDetectorModel(models[which])
+            }
+            .setNegativeButton("닫기", null)
+            .show()
+    }
+
+    private fun selectDetectorModel(model: DetectorModel) {
+        if (model == detectorModel) return
+        detectorModel = model
+        getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().putString(DETECTOR_MODEL, model.name).apply()
+        speech.speak("${model.title}으로 바꿨어요.")
+        cameraExecutor.execute {
+            objectDetector?.close()
+            objectDetector = null
+            objectDetectorFailed = false
+            loadObjectDetectorIfNeeded()
+        }
     }
 
     // ── Mode pill ─────────────────────────────────────────────
@@ -645,7 +691,7 @@ class MainActivity : ComponentActivity() {
         if (objectDetectorFailed) return null
 
         return try {
-            val modelBytes = assets.open(ObjectDetector.MODEL_ASSET).use { it.readBytes() }
+            val modelBytes = assets.open(detectorModel.asset).use { it.readBytes() }
             ObjectDetector(modelBytes, threads = DETECTOR_THREADS).also { objectDetector = it }
         } catch (exception: Exception) {
             objectDetectorFailed = true
@@ -956,6 +1002,7 @@ class MainActivity : ComponentActivity() {
         private const val CAMERA_REQUEST = 10
         private const val PREFERENCES = "gilnun"
         private const val MODE_SWITCH_HINT_COUNT = "modeSwitchHintCount"
+        private const val DETECTOR_MODEL = "detectorModel"
 
         /** About five detector runs per second at most: fast enough to track approaching objects. */
         private const val LIVE_ANALYSIS_INTERVAL_MS = 200L

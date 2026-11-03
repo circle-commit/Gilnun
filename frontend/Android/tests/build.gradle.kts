@@ -36,7 +36,7 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     maxHeapSize = "2g"
-    for (name in listOf("gilnun.fixtures", "gilnun.model", "gilnun.golden", "gilnun.repoRoot")) {
+    for (name in listOf("gilnun.fixtures", "gilnun.model", "gilnun.fastModel", "gilnun.golden", "gilnun.repoRoot")) {
         System.getProperty(name)?.let { systemProperty(name, it) }
     }
     testLogging {

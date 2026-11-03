@@ -7,6 +7,7 @@ Native Android version of the iOS Gilnun app. Like iOS, everything runs on the p
 - **Pedestrian signal (experimental)**: when a Korean pedestrian signal (a tall box, red figure on top, green below) is in view, the lit lamp is read and changes are spoken from the signal's side (`PedestrianSignal.kt`). Several frames must agree; green is never "go" ("차 소리를 확인하고 건너세요"), and a green first seen mid-phase or flashing means "wait for the next one". Needs field testing before anyone relies on it.
 - **Sound from the object's side**: with earphones, each live guidance sentence is panned toward its object (`SpatialAudio`), following blind-navigation research that sound from the target's direction guides better than spoken directions alone (Loomis, Golledge & Klatzky 1998; Microsoft Soundscape).
 - **Speech and vibration**: more urgent guidance cuts off calmer sentences, other apps' audio is lowered while speaking, and vibration patterns show the text search state.
+- **Detector model setting**: the "설정" button next to the title picks "정확도 우선" (default, the float model) or "속도 우선" (`sidewalk_detector_int8.onnx`, the same model quantized to int8: about twice as fast and half the size, but it may miss faint, distant objects; see `tools/quantize_onnx.py`).
 - **Mode switch**: the buttons at the bottom, or a double tap anywhere on the camera view.
 
 `GuidanceEngine.kt`, `SceneAnalyzer.kt`, `ApproachTracker.kt` and `TextReading.kt` are ports of the iOS Swift files of the same names (and of `backend/services/guidance_message_service.py`). Keep them in sync.
@@ -32,5 +33,6 @@ After retraining, export the new checkpoint and refresh the reference detections
 
 ```bash
 python frontend/Android/tools/export_onnx.py      # requires ultralytics, onnx, onnxslim
+python frontend/Android/tools/quantize_onnx.py    # the int8 "속도 우선" model; requires onnxruntime too
 python frontend/IOS_Swift/Tests/make_detector_golden.py
 ```
