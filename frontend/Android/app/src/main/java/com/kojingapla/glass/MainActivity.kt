@@ -9,6 +9,10 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -19,6 +23,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -39,7 +44,9 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.gms.tasks.Tasks
@@ -70,6 +77,22 @@ class MainActivity : ComponentActivity() {
     private var camera: Camera? = null
 
     @Volatile private var currentMode = ProcessingMode.LIVE
+
+    /** True while the phone is in a pocket or bag: frames are skipped until it comes out. */
+    @Volatile private var isPutAway = false
+    private val pocketDetector = PocketDetector()
+    private val pocketCheck = Runnable { checkPocket() }
+    private var proximityCovered = false
+    private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
+    private val proximityListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val sensor = event.sensor
+            proximityCovered = event.values.firstOrNull()?.let { it < sensor.maximumRange && it < POCKET_DISTANCE_CM } ?: false
+            checkPocket()
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+    }
 
     // Camera thread only.
     private val sceneAnalyzer = SceneAnalyzer()
@@ -132,6 +155,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Guidance must not stop because the screen timed out mid-walk.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         speech = SpeechManager(this)
         haptics = HapticFeedbackManager(this)
         detectorModel = DetectorModel.fromName(getSharedPreferences(PREFERENCES, MODE_PRIVATE).getString(DETECTOR_MODEL, null))
@@ -153,6 +178,53 @@ class MainActivity : ComponentActivity() {
             latestGuide = "이 앱을 사용하려면 카메라 권한이 필요합니다."
             renderState()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        pocketDetector.reset()
+        isPutAway = false
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.let {
+            sensorManager.registerListener(proximityListener, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager.unregisterListener(proximityListener)
+        previewView.removeCallbacks(pocketCheck)
+    }
+
+    /**
+     * Pauses analysis while the phone is put away, and lets the screen sleep so the battery
+     * lasts; taking it out (or unlocking it again) resumes guidance.
+     */
+    private fun checkPocket() {
+        previewView.removeCallbacks(pocketCheck)
+        when (pocketDetector.update(proximityCovered, SystemClock.elapsedRealtime() / 1000.0)) {
+            PocketDetector.Change.PUT_AWAY -> {
+                isPutAway = true
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                haptics.stopRepeatingPulses()
+                speech.speak("휴대폰을 넣으셔서 안내를 잠시 멈춰요. 꺼내면 다시 시작해요.")
+            }
+            PocketDetector.Change.TAKEN_OUT -> {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                cameraExecutor.execute {
+                    // What was seen before the pocket is stale.
+                    sceneAnalyzer.reset()
+                    signalTracker.reset()
+                    stabilityTracker.reset()
+                    isPutAway = false
+                }
+                speech.speak("다시 안내를 시작해요.")
+                if (currentMode == ProcessingMode.TEXT) haptics.updateOcrPulseState(OcrHapticPulseState.SEARCHING)
+            }
+            null -> Unit
+        }
+        // Sensor events only come on change, so check again while a change is still pending.
+        if (proximityCovered != pocketDetector.isPutAway) previewView.postDelayed(pocketCheck, POCKET_CHECK_MS)
     }
 
     override fun onStop() {
@@ -198,7 +270,7 @@ class MainActivity : ComponentActivity() {
             insets
         }
 
-        overlay.addView(makeStatusBar(), rowLp(top = 14, h = 36))
+        overlay.addView(makeStatusBar(), rowLp(top = 8, h = 48))
         overlay.addView(makeModePill(), rowLp(top = 16, h = 46))
         overlay.addView(View(this), LinearLayout.LayoutParams(MATCH, 0, 1f))   // Spacer
         guidanceCard = makeGuidanceCard()
@@ -261,6 +333,7 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.WHITE)
             setPadding(dp(10), 0, 0, 0)
         }
+        ViewCompat.setAccessibilityHeading(title, true)
         row.addView(title)
         row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))   // Spacer
 
@@ -277,7 +350,9 @@ class MainActivity : ComponentActivity() {
             contentDescription = "설정"
             setOnClickListener { showSettings() }
         }
-        row.addView(settings, LinearLayout.LayoutParams(WRAP, dp(34)))
+        markAsButton(settings, actionLabel = "탐지 모델 고르기")
+        // 48dp tall: the smallest comfortable touch target.
+        row.addView(settings, LinearLayout.LayoutParams(WRAP, dp(48)))
         return row
     }
 
@@ -383,6 +458,7 @@ class MainActivity : ComponentActivity() {
             isClickable = true
             setOnClickListener { repeatLastText() }
         }
+        markAsButton(card, actionLabel = "다시 읽기")
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -464,6 +540,8 @@ class MainActivity : ComponentActivity() {
             addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
             addView(text)
         }
+        text.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        markAsButton(btn, actionLabel = "$label 모드로 바꾸기")
         return Triple(btn, icon, text)
     }
 
@@ -512,7 +590,7 @@ class MainActivity : ComponentActivity() {
         ocrDivider.visibility = if (hasResult) View.VISIBLE else View.GONE
         ocrResultLbl.visibility = if (hasResult) View.VISIBLE else View.GONE
         ocrResultLbl.text = latestDetectedText.orEmpty()
-        ocrCard.contentDescription = if (hasResult) "${latestDetectedText}. 두 번 탭하면 다시 읽어요." else liveOcrStatus.message
+        ocrCard.contentDescription = if (hasResult) latestDetectedText else liveOcrStatus.message
 
         // Mode bar
         styleModeButton(btnLive, btnLiveIcon, btnLiveLabel, active = !isOcr)
@@ -649,6 +727,7 @@ class MainActivity : ComponentActivity() {
     /** Runs on the camera thread; frames that arrive meanwhile are dropped. */
     private fun analyzeFrame(image: ImageProxy) {
         try {
+            if (isPutAway) return
             when (currentMode) {
                 ProcessingMode.LIVE -> analyzeLiveFrame(image)
                 ProcessingMode.TEXT -> analyzeTextFrame(image)
@@ -738,6 +817,11 @@ class MainActivity : ComponentActivity() {
         }
 
         if (hasNewGuide && currentMode == ProcessingMode.LIVE) {
+            when {
+                signal?.cue == SignalCue.FRESH_GREEN -> haptics.play(HapticEvent.SIGNAL_GO)
+                signal != null -> haptics.play(HapticEvent.SIGNAL_WAIT)
+                result.voiceUrgency == RiskLevel.CRITICAL -> haptics.play(HapticEvent.DANGER)
+            }
             speech.speakGuidance(sentences, urgency)
         }
     }
@@ -950,6 +1034,22 @@ class MainActivity : ComponentActivity() {
     private fun hasCameraPermission() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
+    /**
+     * TalkBack announces `view` as a button and says what a double tap does, e.g.
+     * "다시 읽기, 버튼, 두 번 탭하여 다시 읽기".
+     */
+    private fun markAsButton(view: View, actionLabel: String) {
+        ViewCompat.setAccessibilityDelegate(view, object : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = android.widget.Button::class.java.name
+                info.addAction(AccessibilityNodeInfoCompat.AccessibilityActionCompat(
+                    AccessibilityNodeInfoCompat.ACTION_CLICK, actionLabel
+                ))
+            }
+        })
+    }
+
     // ── Layout / drawable helpers ─────────────────────────────
     private fun dp(v: Int) = (v * density).toInt()
 
@@ -1003,6 +1103,10 @@ class MainActivity : ComponentActivity() {
         private const val PREFERENCES = "gilnun"
         private const val MODE_SWITCH_HINT_COUNT = "modeSwitchHintCount"
         private const val DETECTOR_MODEL = "detectorModel"
+
+        /** Pocket fabric reads as a few centimeters; some sensors only report near (0) or far. */
+        private const val POCKET_DISTANCE_CM = 3f
+        private const val POCKET_CHECK_MS = 500L
 
         /** About five detector runs per second at most: fast enough to track approaching objects. */
         private const val LIVE_ANALYSIS_INTERVAL_MS = 200L

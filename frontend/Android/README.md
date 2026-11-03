@@ -8,6 +8,8 @@ Native Android version of the iOS Gilnun app. Like iOS, everything runs on the p
 - **Sound from the object's side**: with earphones, each live guidance sentence is panned toward its object (`SpatialAudio`), following blind-navigation research that sound from the target's direction guides better than spoken directions alone (Loomis, Golledge & Klatzky 1998; Microsoft Soundscape).
 - **Speech and vibration**: more urgent guidance cuts off calmer sentences, other apps' audio is lowered while speaking, and vibration patterns show the text search state.
 - **Detector model setting**: the "설정" button next to the title picks "정확도 우선" (default, the float model) or "속도 우선" (`sidewalk_detector_int8.onnx`, the same model quantized to int8: about twice as fast and half the size, but it may miss faint, distant objects; see `tools/quantize_onnx.py`).
+- **Walking comfort**: the screen stays on while guiding; a phone put in a pocket or bag (proximity sensor covered for 1.5 s, `PocketDetector`) pauses analysis and lets the screen sleep, and taking it out resumes. Vibration backs up speech on loud streets: one long buzz when the walk signal turns green, three short taps for wait, two strong pulses for danger ahead.
+- **TalkBack**: buttons are announced as buttons with what a double tap does ("다시 읽기", "문자 읽기 모드로 바꾸기"), decorative icons are hidden, the title is a heading, and every button is at least 48dp tall.
 - **Mode switch**: the buttons at the bottom, or a double tap anywhere on the camera view.
 
 `GuidanceEngine.kt`, `SceneAnalyzer.kt`, `ApproachTracker.kt` and `TextReading.kt` are ports of the iOS Swift files of the same names (and of `backend/services/guidance_message_service.py`). Keep them in sync.

@@ -131,8 +131,16 @@ object PedestrianSignalReader {
     }
 }
 
+/** What a signal announcement means for the user, which picks its vibration. */
+enum class SignalCue {
+    /** Red, flashing, or a green of unknown age: wait. */
+    WAIT,
+    /** Green, seen turning from red: the crossing may start. */
+    FRESH_GREEN
+}
+
 /** A spoken change of the pedestrian signal, coming from the signal's direction. */
-data class SignalAnnouncement(val message: String, val pan: Float)
+data class SignalAnnouncement(val message: String, val pan: Float, val cue: SignalCue = SignalCue.WAIT)
 
 /**
  * Turns per-frame lamp readings into rare, safe announcements. Times are in seconds.
@@ -181,16 +189,15 @@ class PedestrianSignalTracker {
         announced = confirmed
         announcedFlashing = false
 
-        val message = when (confirmed) {
-            SignalLamp.RED -> "보행 신호가 빨간불이에요. 기다려 주세요."
+        return when (confirmed) {
+            SignalLamp.RED -> SignalAnnouncement("보행 신호가 빨간불이에요. 기다려 주세요.", pan)
             SignalLamp.GREEN -> if (previous == SignalLamp.RED) {
-                "보행 신호가 초록불로 바뀌었어요. 차 소리를 확인하고 건너세요."
+                SignalAnnouncement("보행 신호가 초록불로 바뀌었어요. 차 소리를 확인하고 건너세요.", pan, SignalCue.FRESH_GREEN)
             } else {
-                "보행 신호가 초록불이에요. 언제 켜졌는지 몰라요. 다음 신호를 기다리면 더 안전해요."
+                SignalAnnouncement("보행 신호가 초록불이에요. 언제 켜졌는지 몰라요. 다음 신호를 기다리면 더 안전해요.", pan)
             }
-            else -> return null
+            else -> null
         }
-        return SignalAnnouncement(message, pan)
     }
 
     /** Red or green when the last few readings agree and span long enough to be no glitch. */
