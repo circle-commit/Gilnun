@@ -112,6 +112,7 @@ class MainActivity : ComponentActivity() {
     // Camera thread only.
     private val sceneAnalyzer = SceneAnalyzer()
     private val signalTracker = PedestrianSignalTracker()
+    private val tactileGuide = TactilePavingGuide()
     private val stabilityTracker = TextStabilityTracker()
     private val duplicateSuppressor = DuplicateTextSuppressor()
     private var objectDetector: ObjectDetector? = null
@@ -234,6 +235,7 @@ class MainActivity : ComponentActivity() {
                     // What was seen before the pocket is stale.
                     sceneAnalyzer.reset()
                     signalTracker.reset()
+                    tactileGuide.reset()
                     stabilityTracker.reset()
                     isPutAway = false
                 }
@@ -650,6 +652,7 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.execute {
             sceneAnalyzer.reset()
             signalTracker.reset()
+            tactileGuide.reset()
             aimSpeaker.reset()
             sightSpeaker.reset()
             stabilityTracker.reset()
@@ -784,7 +787,8 @@ class MainActivity : ComponentActivity() {
             pan = signal?.let { SpatialAudio.pan(it.bbox, width.toDouble()) } ?: 0f,
             now = now / 1000.0
         )
-        publishLiveResult(result, signalAnnouncement, width, height, now)
+        val tactile = tactileGuide.update(TactilePavingDetector.find(pixels, width, height), now / 1000.0)
+        publishLiveResult(result, signalAnnouncement, tactile, width, height, now)
     }
 
     /**
@@ -831,12 +835,15 @@ class MainActivity : ComponentActivity() {
     private fun publishLiveResult(
         result: LiveSceneResult,
         signal: SignalAnnouncement?,
+        tactile: SpokenSentence?,
         frameWidth: Int,
         frameHeight: Int,
         now: Long
     ) {
         // A change of the pedestrian signal comes first, from the signal's side.
-        val sentences = listOfNotNull(signal?.let { SpokenSentence(it.message, it.pan) }) + result.sentences
+        // Tactile paving comes last: obstacles and the signal matter more.
+        val sentences = listOfNotNull(signal?.let { SpokenSentence(it.message, it.pan) }) + result.sentences +
+            listOfNotNull(tactile)
         val voiceGuide = sentences.joinToString(" ") { it.text }
         val urgency = if (signal != null) maxOf(result.voiceUrgency, RiskLevel.HIGH) else result.voiceUrgency
         val hasNewGuide = voiceGuide.isNotEmpty()

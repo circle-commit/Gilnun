@@ -22,6 +22,7 @@ sourceSets {
                 "SceneAnalyzer.kt",
                 "SceneDetection.kt",
                 "SpatialAudio.kt",
+                "TactilePaving.kt",
                 "TextReading.kt"
             )
         }
