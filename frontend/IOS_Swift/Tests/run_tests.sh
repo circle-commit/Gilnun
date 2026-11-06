@@ -13,6 +13,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 python3 "$TESTS_DIR/guidance_fixtures.py" "$WORK_DIR/guidance_fixtures.json"
 xcrun coremlcompiler compile "$APP_DIR/SidewalkDetector.mlpackage" "$WORK_DIR" > /dev/null
+xcrun coremlcompiler compile "$APP_DIR/BrailleBlockModel.mlpackage" "$WORK_DIR" > /dev/null
 
 # Same isolation settings as the app target.
 xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
@@ -23,6 +24,7 @@ xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$APP_DIR/GuidanceEngine.swift" \
     "$APP_DIR/SceneAnalyzer.swift" \
     "$APP_DIR/ObjectDetector.swift" \
+    "$APP_DIR/BrailleBlockSegmenter.swift" \
     "$APP_DIR/LiveOCRStatus.swift" \
     "$APP_DIR/OCRFrameAnalyzer.swift" \
     "$APP_DIR/TextStabilityTracker.swift" \
@@ -32,6 +34,7 @@ xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$TESTS_DIR/DepthTests.swift" \
     "$TESTS_DIR/ObstacleTests.swift" \
     "$TESTS_DIR/TextAimingTests.swift" \
+    "$TESTS_DIR/BrailleTests.swift" \
     "$TESTS_DIR/main.swift" \
     -o "$WORK_DIR/GilnunTests"
 
@@ -39,4 +42,6 @@ xcrun swiftc -swift-version 5 -default-isolation MainActor -O \
     "$WORK_DIR/guidance_fixtures.json" \
     "$WORK_DIR/SidewalkDetector.mlmodelc" \
     "$TESTS_DIR/detector_golden.json" \
-    "$REPO_ROOT"
+    "$REPO_ROOT" \
+    "$WORK_DIR/BrailleBlockModel.mlmodelc" \
+    "$TESTS_DIR/braille_golden.json"
