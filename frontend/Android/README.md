@@ -5,6 +5,7 @@ iOS 길눈 앱의 네이티브 Android 버전입니다. iOS처럼 모든 분석�
 - **실시간 보행 안내**: iOS Core ML 모델과 같은 체크포인트·같은 입력(640×384)의 인도 YOLO11m 모델(`app/src/main/assets/sidewalk_detector.onnx`)을 ONNX Runtime으로 최대 초당 5회 실행합니다. 이어서 `SceneAnalyzer`가 다가오는 물체 추적, 위험도 점수, 거리 추정, 한국어 안내 문장 선택을 합니다(`ApproachTracker`, `GuidanceEngine`). Android 폰에는 LiDAR가 없어서, 거리는 백엔드처럼 상자의 크기와 위치로 추정합니다.
 - **문자 읽기**: ML Kit의 기기 내 한국어 인식으로 글자를 찾고, 휴대폰을 어디로 옮길지 알려 줍니다("휴대폰을 왼쪽으로 조금 옮겨 주세요."). 글자가 안정되면 그 부분을 잘라 다시 읽어서 작은 글씨도 더 잘 읽습니다. 숫자가 있는 줄은 두 프레임에서 똑같이 읽혔을 때만 읽고, 어두우면 플래시를 켜며, 화면을 한 번 누르면 마지막 글자를 다시 읽습니다.
 - **보행 신호 인식 (실험 기능)**: 한국 보행 신호등(세로로 긴 상자, 위에 빨간 사람, 아래에 초록 사람)이 보이면 켜진 등을 읽고, 바뀔 때 신호등 쪽에서 들리게 알려 줍니다(`PedestrianSignal.kt`). 여러 프레임이 일치해야 말하고, 초록불이어도 "건너세요"만 말하지 않으며("차 소리를 확인하고 건너세요"), 중간부터 본 초록불이나 깜빡이는 초록불은 "다음 신호를 기다리세요"로 안내합니다. 실제 횡단보도에서 충분히 검증하기 전에는 이 안내에만 의존하면 안 됩니다.
+- **점자블록 안내**: iOS와 같은 점자블록 분할 모델(YOLO11n-seg, AI Hub 인도보행 서피스 폴리곤으로 학습, `app/src/main/assets/braille_block.onnx`)로 점자블록을 찾아 화면에 하늘색으로 칠하고, 걷는 영역(화면 아래 60%)에 3프레임 연속 보이면 "왼쪽에/앞에/오른쪽에 점자블록이 있어요."라고 블록 쪽에서 들리게 알려 줍니다(`BrailleBlock.kt`, iOS `BrailleBlockSegmenter.swift`를 옮김). 방향이 바뀌면 4초 간격으로 다시 알리고, 급한 안내나 신호 안내 중에는 기다립니다.
 - **물체 쪽에서 들리는 안내**: 이어폰을 끼면 실시간 안내 문장마다 그 물체가 있는 쪽에서 소리가 납니다(`SpatialAudio`). 목표 방향에서 들리는 소리가 말로 하는 방향 안내보다 길 안내에 효과적이라는 시각장애인 길 안내 연구를 따랐습니다(Loomis, Golledge & Klatzky 1998; Microsoft Soundscape).
 - **음성과 진동**: 더 위급한 안내만 말하던 문장을 끊고 끼어들고, 말하는 동안 다른 앱 소리를 줄이며, 문자를 찾는 상태를 진동 패턴으로 알려 줍니다.
 - **탐지 모델 설정**: 제목 옆 "설정" 버튼으로 "정확도 우선"(기본값, float 모델)과 "속도 우선"(`sidewalk_detector_int8.onnx`, 같은 모델을 int8로 압축: 약 2배 빠르고 크기는 절반이지만 멀리 있는 흐릿한 물체를 놓칠 수 있음, `tools/quantize_onnx.py` 참고) 중 고릅니다.
@@ -37,5 +38,7 @@ Kotlin 안내 로직을 Python 백엔드와 비교하고(iOS 테스트와 같은
 ```bash
 python frontend/Android/tools/export_onnx.py      # ultralytics, onnx, onnxslim 필요
 python frontend/Android/tools/quantize_onnx.py    # int8 "속도 우선" 모델, onnxruntime도 필요
+python frontend/Android/tools/export_braille_onnx.py   # 점자블록 모델 (runs/braille/yolo11n_braille/weights/best.pt)
+python frontend/Android/tests/fixtures/make_braille_golden.py
 python frontend/IOS_Swift/Tests/make_detector_golden.py
 ```

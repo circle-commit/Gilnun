@@ -5,7 +5,6 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
 import java.nio.FloatBuffer
-import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -61,14 +60,8 @@ class ObjectDetector(modelBytes: ByteArray, threads: Int = 4) : AutoCloseable {
         if (frameWidth <= 0 || frameHeight <= 0) return emptyList()
         require(pixels.size >= frameWidth * frameHeight) { "pixel buffer is smaller than the frame" }
 
-        val modelWidth = inputWidth.toDouble()
-        val modelHeight = inputHeight.toDouble()
-        val gain = min(modelWidth / frameWidth, modelHeight / frameHeight)
-        val scaledWidth = Math.rint(frameWidth * gain).toInt()
-        val scaledHeight = Math.rint(frameHeight * gain).toInt()
-        val left = Math.rint((modelWidth - scaledWidth) / 2 - 0.1).toInt()
-        val top = Math.rint((modelHeight - scaledHeight) / 2 - 0.1).toInt()
-        letterbox(pixels, frameWidth, frameHeight, scaledWidth, scaledHeight, left, top)
+        val letterbox = Letterbox(frameWidth, frameHeight, inputWidth, inputHeight)
+        letterbox.render(pixels, input)
 
         val output = OnnxTensor.createTensor(
             environment,
@@ -84,8 +77,9 @@ class ObjectDetector(modelBytes: ByteArray, threads: Int = 4) : AutoCloseable {
         }
 
         // Ultralytics `scale_boxes`: undo the padding, then the scale, then clip to the frame.
-        val padX = Math.rint((modelWidth - frameWidth * gain) / 2 - 0.1)
-        val padY = Math.rint((modelHeight - frameHeight * gain) / 2 - 0.1)
+        val gain = letterbox.gain
+        val padX = letterbox.padX
+        val padY = letterbox.padY
         return suppress(output).map { candidate ->
             val box = candidate.box
             RawDetection(
@@ -150,71 +144,9 @@ class ObjectDetector(modelBytes: ByteArray, threads: Int = 4) : AutoCloseable {
         return kept
     }
 
-    /**
-     * Writes the frame scaled to `scaledWidth` x `scaledHeight` at (`left`, `top`) on a gray
-     * canvas into `input` as normalized planar RGB, like Ultralytics' `LetterBox` (OpenCV
-     * `INTER_LINEAR`, pad value 114).
-     */
-    private fun letterbox(
-        pixels: IntArray,
-        frameWidth: Int,
-        frameHeight: Int,
-        scaledWidth: Int,
-        scaledHeight: Int,
-        left: Int,
-        top: Int
-    ) {
-        val plane = inputWidth * inputHeight
-        input.fill(PAD_VALUE)
-
-        val scaleX = frameWidth.toDouble() / scaledWidth
-        val scaleY = frameHeight.toDouble() / scaledHeight
-        val sourceX0 = IntArray(scaledWidth)
-        val sourceX1 = IntArray(scaledWidth)
-        val weightX = FloatArray(scaledWidth)
-        for (x in 0 until scaledWidth) {
-            val position = (x + 0.5) * scaleX - 0.5
-            val base = floor(position).toInt()
-            weightX[x] = if (base < 0) 0f else (position - base).toFloat()
-            sourceX0[x] = base.coerceIn(0, frameWidth - 1)
-            sourceX1[x] = (base + 1).coerceIn(0, frameWidth - 1)
-        }
-
-        for (y in 0 until scaledHeight) {
-            val targetY = top + y
-            if (targetY !in 0 until inputHeight) continue
-            val position = (y + 0.5) * scaleY - 0.5
-            val base = floor(position).toInt()
-            val weightY = if (base < 0) 0f else (position - base).toFloat()
-            val row0 = base.coerceIn(0, frameHeight - 1) * frameWidth
-            val row1 = (base + 1).coerceIn(0, frameHeight - 1) * frameWidth
-
-            for (x in 0 until scaledWidth) {
-                val targetX = left + x
-                if (targetX !in 0 until inputWidth) continue
-                val topLeft = pixels[row0 + sourceX0[x]]
-                val topRight = pixels[row0 + sourceX1[x]]
-                val bottomLeft = pixels[row1 + sourceX0[x]]
-                val bottomRight = pixels[row1 + sourceX1[x]]
-                val index = targetY * inputWidth + targetX
-                for (channel in 0 until 3) {
-                    val shift = 16 - channel * 8
-                    val upper = lerp(channelOf(topLeft, shift), channelOf(topRight, shift), weightX[x])
-                    val lower = lerp(channelOf(bottomLeft, shift), channelOf(bottomRight, shift), weightX[x])
-                    input[channel * plane + index] = lerp(upper, lower, weightY) / 255f
-                }
-            }
-        }
-    }
-
-    private fun channelOf(pixel: Int, shift: Int): Float = ((pixel shr shift) and 0xFF).toFloat()
-
-    private fun lerp(start: Float, end: Float, weight: Float): Float = start + (end - start) * weight
-
     private fun clamp(value: Double, upperBound: Double): Double = max(0.0, min(upperBound, value))
 
     companion object {
-        private const val PAD_VALUE = 114f / 255f
 
         /** Reads class names from the export metadata, e.g. "{0: 'person', 1: 'car', ...}". */
         fun classNames(names: String): List<String> =
