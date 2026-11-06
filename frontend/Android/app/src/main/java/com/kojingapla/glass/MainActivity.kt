@@ -117,6 +117,9 @@ class MainActivity : ComponentActivity() {
     private var objectDetector: ObjectDetector? = null
     @Volatile private var detectorModel = DetectorModel.ACCURATE
     private var objectDetectorFailed = false
+    private var brailleSegmenter: BrailleBlockSegmenter? = null
+    private var brailleSegmenterFailed = false
+    private val brailleTracker = BrailleBlockTracker()
     private val textRecognizer by lazy { TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build()) }
     private var lastLiveAnalysisMs = 0L
     private var lastLiveGuideMs = 0L
@@ -139,6 +142,8 @@ class MainActivity : ComponentActivity() {
     private var isLiveAnalysisRunning = false
     private var isCameraDenied = false
     private var liveBoxes: List<LiveGuidanceBox> = emptyList()
+    /** Braille guide blocks in the latest live frame, highlighted for low-vision users. */
+    private var liveBraille: BrailleMask = BrailleMask.EMPTY
     private var liveImageW = 0f
     private var liveImageH = 0f
 
@@ -234,6 +239,7 @@ class MainActivity : ComponentActivity() {
                     // What was seen before the pocket is stale.
                     sceneAnalyzer.reset()
                     signalTracker.reset()
+                    brailleTracker.reset()
                     stabilityTracker.reset()
                     isPutAway = false
                 }
@@ -257,6 +263,8 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.execute {
             objectDetector?.close()
             objectDetector = null
+            brailleSegmenter?.close()
+            brailleSegmenter = null
             textRecognizer.close()
         }
         cameraExecutor.shutdown()
@@ -588,7 +596,7 @@ class MainActivity : ComponentActivity() {
         ocrCard.visibility = if (isOcr) View.VISIBLE else View.GONE
 
         boxOverlay.visibility = if (isOcr) View.GONE else View.VISIBLE
-        if (isOcr) boxOverlay.clear() else boxOverlay.update(liveBoxes, liveImageW, liveImageH)
+        if (isOcr) boxOverlay.clear() else boxOverlay.update(liveBoxes, liveImageW, liveImageH, liveBraille)
 
         // Guidance card
         val sev = severityColor()
@@ -650,6 +658,7 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.execute {
             sceneAnalyzer.reset()
             signalTracker.reset()
+            brailleTracker.reset()
             aimSpeaker.reset()
             sightSpeaker.reset()
             stabilityTracker.reset()
@@ -663,6 +672,7 @@ class MainActivity : ComponentActivity() {
         liveOcrStatus = LiveOcrStatus.SEARCHING
         latestLiveRiskScore = 0
         liveBoxes = emptyList()
+        liveBraille = BrailleMask.EMPTY
         val message = when (mode) {
             ProcessingMode.LIVE -> {
                 isLiveAnalysisRunning = false
@@ -784,7 +794,32 @@ class MainActivity : ComponentActivity() {
             pan = signal?.let { SpatialAudio.pan(it.bbox, width.toDouble()) } ?: 0f,
             now = now / 1000.0
         )
-        publishLiveResult(result, signalAnnouncement, width, height, now)
+
+        // Supplementary: a failed frame just leaves the highlight empty.
+        val brailleMask = runCatching { loadBrailleSegmenterIfNeeded()?.segment(pixels, width, height) }.getOrNull()
+            ?: BrailleMask.EMPTY
+        // Urgent warnings and signal changes go first; the braille sentence waits for a calmer frame.
+        val canSpeakBraille = signalAnnouncement == null && (result.sentences.isEmpty() || result.voiceUrgency < RiskLevel.HIGH)
+        val braille = brailleTracker.update(brailleMask, now / 1000.0, canSpeakBraille)?.let { message ->
+            // From the blocks' side, like the other guidance.
+            val center = BrailleBlockTracker.centerColumn(brailleMask) ?: (BrailleMask.COLUMNS / 2.0)
+            val pan = ((center / BrailleMask.COLUMNS - 0.5) * 2).coerceIn(-1.0, 1.0) * SpatialAudio.MAX_PAN
+            SpokenSentence(message, pan.toFloat())
+        }
+        publishLiveResult(result, signalAnnouncement, braille, brailleMask, width, height, now)
+    }
+
+    private fun loadBrailleSegmenterIfNeeded(): BrailleBlockSegmenter? {
+        brailleSegmenter?.let { return it }
+        if (brailleSegmenterFailed) return null
+        return try {
+            val modelBytes = assets.open(BrailleBlockSegmenter.MODEL_ASSET).use { it.readBytes() }
+            BrailleBlockSegmenter(modelBytes).also { brailleSegmenter = it }
+        } catch (exception: Exception) {
+            brailleSegmenterFailed = true
+            Log.e(TAG, "Braille block segmenter unavailable", exception)
+            null
+        }
     }
 
     /**
@@ -831,12 +866,15 @@ class MainActivity : ComponentActivity() {
     private fun publishLiveResult(
         result: LiveSceneResult,
         signal: SignalAnnouncement?,
+        braille: SpokenSentence?,
+        brailleMask: BrailleMask,
         frameWidth: Int,
         frameHeight: Int,
         now: Long
     ) {
         // A change of the pedestrian signal comes first, from the signal's side.
-        val sentences = listOfNotNull(signal?.let { SpokenSentence(it.message, it.pan) }) + result.sentences
+        val sentences = listOfNotNull(signal?.let { SpokenSentence(it.message, it.pan) }) + result.sentences +
+            listOfNotNull(braille)
         val voiceGuide = sentences.joinToString(" ") { it.text }
         val urgency = if (signal != null) maxOf(result.voiceUrgency, RiskLevel.HIGH) else result.voiceUrgency
         val hasNewGuide = voiceGuide.isNotEmpty()
@@ -861,6 +899,7 @@ class MainActivity : ComponentActivity() {
             liveImageW = frameWidth.toFloat()
             liveImageH = frameHeight.toFloat()
             liveBoxes = boxes
+            liveBraille = brailleMask
             renderState()
         }
 

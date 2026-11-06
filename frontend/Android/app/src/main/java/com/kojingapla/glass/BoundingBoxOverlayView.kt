@@ -19,6 +19,7 @@ import android.view.View
 class BoundingBoxOverlayView(context: Context) : View(context) {
 
     private var boxes: List<LiveGuidanceBox> = emptyList()
+    private var braille: BrailleMask = BrailleMask.EMPTY
     private var imageW = 0f
     private var imageH = 0f
 
@@ -35,6 +36,11 @@ class BoundingBoxOverlayView(context: Context) : View(context) {
         textSize = dp(11f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
+    /** Bright cyan like iOS: worn or gray blocks are hard to see. */
+    private val braillePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = BRAILLE
+        style = Paint.Style.FILL
+    }
     private val markerFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.FILL
@@ -49,16 +55,18 @@ class BoundingBoxOverlayView(context: Context) : View(context) {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
-    fun update(boxes: List<LiveGuidanceBox>, imageW: Float, imageH: Float) {
+    fun update(boxes: List<LiveGuidanceBox>, imageW: Float, imageH: Float, braille: BrailleMask = BrailleMask.EMPTY) {
         this.boxes = boxes
+        this.braille = braille
         this.imageW = imageW
         this.imageH = imageH
         invalidate()
     }
 
     fun clear() {
-        if (boxes.isEmpty()) return
+        if (boxes.isEmpty() && braille.isEmpty) return
         boxes = emptyList()
+        braille = BrailleMask.EMPTY
         invalidate()
     }
 
@@ -75,7 +83,7 @@ class BoundingBoxOverlayView(context: Context) : View(context) {
         canvas.drawRect(cx - dp(1f), cy - dp(14f), cx + dp(1f), cy + dp(14f), markerFill)
         canvas.drawCircle(cx, cy, dp(6f), markerStroke)
 
-        if (imageW <= 0f || imageH <= 0f || boxes.isEmpty()) {
+        if (imageW <= 0f || imageH <= 0f || (boxes.isEmpty() && braille.isEmpty)) {
             canvas.restore()
             return
         }
@@ -86,6 +94,8 @@ class BoundingBoxOverlayView(context: Context) : View(context) {
         val dispH = imageH * scale
         val offX = (vw - dispW) / 2f
         val offY = (vh - dispH) / 2f
+
+        drawBraille(canvas, offX, offY, dispW, dispH)
 
         for (box in boxes) {
             val rawLeft = offX + box.rect.left * dispW
@@ -126,6 +136,25 @@ class BoundingBoxOverlayView(context: Context) : View(context) {
         canvas.restore()
     }
 
+    /** Paints the braille block cells, one rect per run of filled cells in a row. */
+    private fun drawBraille(canvas: Canvas, offX: Float, offY: Float, dispW: Float, dispH: Float) {
+        if (braille.isEmpty) return
+        val cellW = dispW / BrailleMask.COLUMNS
+        val cellH = dispH / BrailleMask.ROWS
+        for (row in 0 until BrailleMask.ROWS) {
+            var column = 0
+            while (column < BrailleMask.COLUMNS) {
+                if (!braille[column, row]) {
+                    column += 1
+                    continue
+                }
+                val start = column
+                while (column < BrailleMask.COLUMNS && braille[column, row]) column += 1
+                canvas.drawRect(offX + start * cellW, offY + row * cellH, offX + column * cellW, offY + (row + 1) * cellH, braillePaint)
+            }
+        }
+    }
+
     /// Risk-based color: green when calm, yellow for caution, red for danger.
     private fun riskColor(score: Int): Int = when {
         score >= 85 -> DANGER
@@ -138,5 +167,6 @@ class BoundingBoxOverlayView(context: Context) : View(context) {
         const val CAUTION = 0xFFFFD900.toInt()
         const val LIVE = 0xFF29DE8F.toInt()
         const val TAG_TEXT = 0xFF050F24.toInt()
+        const val BRAILLE = 0x8000E6FF.toInt()
     }
 }

@@ -12,9 +12,11 @@ sourceSets {
             setSrcDirs(listOf(appSources))
             include(
                 "ApproachTracker.kt",
+                "BrailleBlock.kt",
                 "CameraViewCheck.kt",
                 "DuplicateTextSuppressor.kt",
                 "GuidanceEngine.kt",
+                "Letterbox.kt",
                 "Models.kt",
                 "ObjectDetector.kt",
                 "PedestrianSignal.kt",
@@ -38,7 +40,7 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     maxHeapSize = "2g"
-    for (name in listOf("gilnun.fixtures", "gilnun.model", "gilnun.fastModel", "gilnun.golden", "gilnun.repoRoot")) {
+    for (name in listOf("gilnun.fixtures", "gilnun.model", "gilnun.fastModel", "gilnun.brailleModel", "gilnun.golden", "gilnun.repoRoot")) {
         System.getProperty(name)?.let { systemProperty(name, it) }
     }
     testLogging {
