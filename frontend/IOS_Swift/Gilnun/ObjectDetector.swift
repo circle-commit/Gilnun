@@ -75,26 +75,12 @@ nonisolated final class ObjectDetector {
         let frameHeight = Double(extent.height)
         guard frameWidth > 0, frameHeight > 0 else { return [] }
 
-        let modelWidth = Double(inputWidth)
-        let modelHeight = Double(inputHeight)
-        let gain = min(modelWidth / frameWidth, modelHeight / frameHeight)
-        let scaledWidth = (frameWidth * gain).rounded(.toNearestOrEven)
-        let scaledHeight = (frameHeight * gain).rounded(.toNearestOrEven)
-        let left = ((modelWidth - scaledWidth) / 2 - 0.1).rounded(.toNearestOrEven)
-        let top = ((modelHeight - scaledHeight) / 2 - 0.1).rounded(.toNearestOrEven)
-
-        // Core Image's origin is bottom-left, so the top padding becomes a y offset from below.
-        let scaled = image
-            .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-            .clampedToExtent()
-            .transformed(by: CGAffineTransform(scaleX: scaledWidth / frameWidth, y: scaledHeight / frameHeight))
-            .cropped(to: CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
-            .transformed(by: CGAffineTransform(translationX: left, y: modelHeight - top - scaledHeight))
-        let canvas = CGRect(x: 0, y: 0, width: modelWidth, height: modelHeight)
-        let letterboxed = scaled.composited(over: padColor).cropped(to: canvas)
-
+        let letterbox = Letterbox(frame: extent.size, modelWidth: inputWidth, modelHeight: inputHeight)
+        let gain = letterbox.gain
+        let modelWidth = letterbox.modelWidth
+        let modelHeight = letterbox.modelHeight
         let buffer = try modelInputBuffer()
-        context.render(letterboxed, to: buffer, bounds: canvas, colorSpace: colorSpace)
+        letterbox.render(image, into: buffer, padColor: padColor, context: context, colorSpace: colorSpace)
 
         let input = try MLDictionaryFeatureProvider(dictionary: [
             "image": MLFeatureValue(pixelBuffer: buffer),
@@ -110,8 +96,8 @@ nonisolated final class ObjectDetector {
         }
 
         // Ultralytics `scale_boxes`: undo the padding, then the scale, then clip to the frame.
-        let padX = ((modelWidth - frameWidth * gain) / 2 - 0.1).rounded(.toNearestOrEven)
-        let padY = ((modelHeight - frameHeight * gain) / 2 - 0.1).rounded(.toNearestOrEven)
+        let padX = letterbox.padX
+        let padY = letterbox.padY
         let boxCount = confidences.shape[0].intValue
         let classCount = min(labels.count, confidences.shape[1].intValue)
 
@@ -150,24 +136,7 @@ nonisolated final class ObjectDetector {
             return inputBuffer
         }
 
-        let attributes: [CFString: Any] = [
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as [CFString: Any],
-            kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferMetalCompatibilityKey: true,
-        ]
-        var buffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            inputWidth,
-            inputHeight,
-            kCVPixelFormatType_32BGRA,
-            attributes as CFDictionary,
-            &buffer
-        )
-        guard status == kCVReturnSuccess, let buffer else {
-            throw DetectorError.pixelBufferUnavailable
-        }
-
+        let buffer = try Letterbox.makeInputBuffer(width: inputWidth, height: inputHeight)
         inputBuffer = buffer
         return buffer
     }
@@ -195,5 +164,67 @@ nonisolated final class ObjectDetector {
             return (index, String(names[nameRange]))
         }
         return indexed.sorted { $0.0 < $1.0 }.map(\.1)
+    }
+}
+
+/// Ultralytics-style letterboxing of an upright frame into a model input (scale to fit,
+/// centered, gray padding), shared by the object detector and the braille block segmenter.
+nonisolated struct Letterbox {
+    let modelWidth: Double
+    let modelHeight: Double
+    let gain: Double
+    /// Where the scaled frame starts in the model input, as `LetterBox` places it.
+    let left: Double
+    let top: Double
+    /// The padding `scale_boxes` removes when mapping model coordinates back to the frame.
+    let padX: Double
+    let padY: Double
+    private let frame: CGRect
+    private let scaledWidth: Double
+    private let scaledHeight: Double
+
+    init(frame size: CGSize, modelWidth width: Int, modelHeight height: Int) {
+        frame = CGRect(origin: .zero, size: size)
+        modelWidth = Double(width)
+        modelHeight = Double(height)
+        let frameWidth = Double(size.width)
+        let frameHeight = Double(size.height)
+        gain = min(modelWidth / frameWidth, modelHeight / frameHeight)
+        scaledWidth = (frameWidth * gain).rounded(.toNearestOrEven)
+        scaledHeight = (frameHeight * gain).rounded(.toNearestOrEven)
+        left = ((modelWidth - scaledWidth) / 2 - 0.1).rounded(.toNearestOrEven)
+        top = ((modelHeight - scaledHeight) / 2 - 0.1).rounded(.toNearestOrEven)
+        padX = ((modelWidth - frameWidth * gain) / 2 - 0.1).rounded(.toNearestOrEven)
+        padY = ((modelHeight - frameHeight * gain) / 2 - 0.1).rounded(.toNearestOrEven)
+    }
+
+    /// A BGRA buffer Core ML reads without a copy.
+    static func makeInputBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+        let attributes: [CFString: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as [CFString: Any],
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ]
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &buffer)
+        guard status == kCVReturnSuccess, let buffer else {
+            throw ObjectDetector.DetectorError.pixelBufferUnavailable
+        }
+        return buffer
+    }
+
+    func render(_ image: CIImage, into buffer: CVPixelBuffer, padColor: CIImage, context: CIContext, colorSpace: CGColorSpace) {
+        let extent = image.extent
+        let frameWidth = Double(frame.width)
+        let frameHeight = Double(frame.height)
+        // Core Image's origin is bottom-left, so the top padding becomes a y offset from below.
+        let scaled = image
+            .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+            .clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: scaledWidth / frameWidth, y: scaledHeight / frameHeight))
+            .cropped(to: CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
+            .transformed(by: CGAffineTransform(translationX: left, y: modelHeight - top - scaledHeight))
+        let canvas = CGRect(x: 0, y: 0, width: modelWidth, height: modelHeight)
+        context.render(scaled.composited(over: padColor).cropped(to: canvas), to: buffer, bounds: canvas, colorSpace: colorSpace)
     }
 }

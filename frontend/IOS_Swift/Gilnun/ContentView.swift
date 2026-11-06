@@ -94,6 +94,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             if mode == .live {
+                BrailleOverlay(mask: cam.brailleMask, imageSize: cam.liveImageSize)
+                    .ignoresSafeArea()
+
                 BoundingBoxOverlay(boxes: cam.liveBoxes, imageSize: cam.liveImageSize)
                     .ignoresSafeArea()
 
@@ -385,6 +388,56 @@ private struct DangerEdge: View {
     }
 }
 
+// MARK: - Braille Block Overlay
+/// Paints the braille guide blocks in a bright color, because worn or gray blocks are hard
+/// to see. Decorative: the spoken guidance already says where they are.
+private struct BrailleOverlay: View {
+    let mask: BrailleMask
+    let imageSize: CGSize
+
+    var body: some View {
+        Canvas { context, size in
+            var path = Path()
+            let cellWidth = 1 / CGFloat(BrailleMask.columns)
+            let cellHeight = 1 / CGFloat(BrailleMask.rows)
+            for row in 0..<BrailleMask.rows {
+                // One rect per run of filled cells keeps the path small.
+                var column = 0
+                while column < BrailleMask.columns {
+                    guard mask[column, row] else { column += 1; continue }
+                    let start = column
+                    while column < BrailleMask.columns, mask[column, row] { column += 1 }
+                    let cells = CGRect(x: CGFloat(start) * cellWidth, y: CGFloat(row) * cellHeight,
+                                       width: CGFloat(column - start) * cellWidth, height: cellHeight)
+                    path.addRect(aspectFillRect(cells, image: imageSize, view: size))
+                }
+            }
+            context.fill(path, with: .color(Color(red: 0, green: 0.9, blue: 1).opacity(0.5)))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Maps a normalized (0...1) image-space rect onto the `.resizeAspectFill` camera
+/// preview. Aspect-fill scales the image by the *larger* axis ratio and center-crops
+/// the overflow, so we apply the same scale and centering offsets the preview layer
+/// uses — this is what keeps an overlay locked to the real object on screen.
+private func aspectFillRect(_ n: CGRect, image imageSize: CGSize, view: CGSize) -> CGRect {
+    guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
+    let scale = max(view.width / imageSize.width, view.height / imageSize.height)
+    let dispW = imageSize.width * scale
+    let dispH = imageSize.height * scale
+    let offX = (view.width - dispW) / 2
+    let offY = (view.height - dispH) / 2
+    return CGRect(
+        x: offX + n.minX * dispW,
+        y: offY + n.minY * dispH,
+        width: n.width * dispW,
+        height: n.height * dispH
+    )
+}
+
 // MARK: - Bounding Box Overlay
 /// Highlights the most important detection. Decorative for sighted and low-vision
 /// users — hidden from VoiceOver so the voice guidance remains the primary channel.
@@ -399,7 +452,7 @@ private struct BoundingBoxOverlay: View {
                 ForEach(boxes) { box in
                     // Map into preview space, then clip to the visible preview bounds so a
                     // box never spills past the cropped edges of the aspect-fill image.
-                    let frame = mapped(box.rect, view: geo.size).intersection(bounds)
+                    let frame = aspectFillRect(box.rect, image: imageSize, view: geo.size).intersection(bounds)
                     if !frame.isNull, frame.width > 1, frame.height > 1 {
                         BoundingBoxView(box: box, frame: frame)
                     }
@@ -411,25 +464,6 @@ private struct BoundingBoxOverlay: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-
-    /// Maps a normalized (0...1) image-space rect onto the `.resizeAspectFill` camera
-    /// preview. Aspect-fill scales the image by the *larger* axis ratio and center-crops
-    /// the overflow, so we apply the same scale and centering offsets the preview layer
-    /// uses — this is what keeps the box locked to the real object on screen.
-    private func mapped(_ n: CGRect, view: CGSize) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
-        let scale = max(view.width / imageSize.width, view.height / imageSize.height)
-        let dispW = imageSize.width * scale
-        let dispH = imageSize.height * scale
-        let offX = (view.width - dispW) / 2
-        let offY = (view.height - dispH) / 2
-        return CGRect(
-            x: offX + n.minX * dispW,
-            y: offY + n.minY * dispH,
-            width: n.width * dispW,
-            height: n.height * dispH
-        )
     }
 }
 

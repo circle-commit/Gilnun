@@ -115,7 +115,7 @@ private struct MatchStats {
 /// Simulates what the camera delivers: the upright crop rotated into the sensor's
 /// landscape orientation, stored as a full-range 4:2:0 YUV buffer, then turned
 /// upright again by the same function the app uses.
-private func cameraFrame(from upright: CIImage, context: CIContext) -> CIImage? {
+func cameraFrame(from upright: CIImage, context: CIContext) -> CIImage? {
     let origin = CGAffineTransform(translationX: -upright.extent.minX, y: -upright.extent.minY)
     let rotated = upright.transformed(by: origin).oriented(.left)
     let sensorImage = rotated.transformed(by: CGAffineTransform(translationX: -rotated.extent.minX, y: -rotated.extent.minY))

@@ -26,6 +26,8 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     @Published var latestLiveRiskScore = 0
     @Published var liveBoxes: [LiveGuidanceBox] = []
     @Published var liveImageSize: CGSize = .zero
+    /// Braille guide blocks in the latest live frame, highlighted for low-vision users.
+    @Published var brailleMask: BrailleMask = .empty
     /// True once live frames are actually being analyzed (false while the camera starts).
     @Published var isLiveAnalysisRunning = false
     @Published var isCameraDenied = false
@@ -68,6 +70,9 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private let sceneAnalyzer = SceneAnalyzer()
     private var objectDetector: ObjectDetector?
     private var objectDetectorFailed = false
+    private var brailleSegmenter: BrailleBlockSegmenter?
+    private var brailleSegmenterFailed = false
+    private let brailleTracker = BrailleBlockTracker()
     private var lastLiveAnalysisTime: TimeInterval = 0
     private var loggedFirstDepthFrame = false
     private var lastLiveGuideTime: TimeInterval = 0
@@ -101,6 +106,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         speechManager.clearPendingGuidance()
         videoQueue.async {
             self.sceneAnalyzer.reset()
+            self.brailleTracker.reset()
             self.lastLiveGuideTime = ProcessInfo.processInfo.systemUptime
             self.displayedRiskScore = 0
         }
@@ -114,6 +120,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             latestLiveDirection = "center"
             latestLiveRiskScore = 0
             liveBoxes = []
+            brailleMask = .empty
             hapticManager.stopRepeatingPulses()
             message = "실시간 보행 안내를 시작합니다." + modeSwitchHint(to: "문자 읽기")
         case .textDescription:
@@ -122,6 +129,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             latestLiveDirection = "center"
             latestLiveRiskScore = 0
             liveBoxes = []
+            brailleMask = .empty
             hapticManager.updateOCRPulseState(.searching)
             message = "문자 읽기 모드입니다. 카메라를 가까운 문자에 맞춰주세요."
                 + modeSwitchHint(to: "실시간 안내", repeatHint: "화면을 한 번 누르면 읽은 문자를 다시 읽습니다.")
@@ -298,8 +306,36 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             let source = depthData?.cameraCalibrationData != nil ? "calibration" : "field of view"
             print("LiDAR first depth frame: \(depth.width)x\(depth.height), screen center \(centerDistance), intrinsics from \(source): \(String(describing: depth.intrinsics)), gravity \(String(describing: gravity))")
         }
-        let result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now, depth: depth, gravity: gravity)
-        publishLiveResult(result, frameSize: frameSize, now: now)
+        var result = sceneAnalyzer.analyze(detections, frameSize: frameSize, now: now, depth: depth, gravity: gravity)
+
+        // Supplementary: a failed frame just leaves the highlight empty.
+        let brailleMask = (try? loadBrailleSegmenterIfNeeded()?.segment(in: frame)) ?? .empty
+        // Urgent warnings go first; the braille sentence waits for a calmer frame.
+        let canSpeakBraille = result.voiceGuide.isEmpty || result.voiceUrgency < .high
+        if let message = brailleTracker.update(brailleMask, now: now, canSpeak: canSpeakBraille) {
+            result = LiveSceneResult(
+                voiceGuide: [result.voiceGuide, message].filter { !$0.isEmpty }.joined(separator: " "),
+                voiceUrgency: result.voiceUrgency,
+                detections: result.detections,
+                closeObstacle: result.closeObstacle
+            )
+        }
+        publishLiveResult(result, brailleMask: brailleMask, frameSize: frameSize, now: now)
+    }
+
+    private func loadBrailleSegmenterIfNeeded() -> BrailleBlockSegmenter? {
+        if let brailleSegmenter {
+            return brailleSegmenter
+        }
+        guard !brailleSegmenterFailed else { return nil }
+
+        do {
+            brailleSegmenter = try BrailleBlockSegmenter()
+        } catch {
+            brailleSegmenterFailed = true
+            print("Braille block segmenter unavailable: \(error)")
+        }
+        return brailleSegmenter
     }
 
     private func loadObjectDetectorIfNeeded() -> ObjectDetector? {
@@ -320,7 +356,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         }
     }
 
-    private func publishLiveResult(_ result: LiveSceneResult, frameSize: CGSize, now: TimeInterval) {
+    private func publishLiveResult(_ result: LiveSceneResult, brailleMask: BrailleMask, frameSize: CGSize, now: TimeInterval) {
         let hasNewGuide = !result.voiceGuide.isEmpty
         if hasNewGuide {
             lastLiveGuideTime = now
@@ -354,6 +390,9 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             self.latestLiveRiskScore = displayedRisk
             self.liveImageSize = frameSize
             self.liveBoxes = boxes
+            if self.brailleMask != brailleMask {
+                self.brailleMask = brailleMask
+            }
         }
 
         if hasNewGuide && currentMode == .liveAnalyzing {

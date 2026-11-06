@@ -1,6 +1,6 @@
 import Foundation
 
-// Usage: GilnunTests <guidance_fixtures.json> <SidewalkDetector.mlmodelc> <detector_golden.json> <repo root>
+// Usage: GilnunTests <guidance_fixtures.json> <SidewalkDetector.mlmodelc> <detector_golden.json> <repo root> <BrailleBlockModel.mlmodelc> <braille_golden.json>
 // Run through run_tests.sh, which generates the fixtures and compiles the model.
 
 var checkCount = 0
@@ -17,8 +17,8 @@ func expect(_ condition: Bool, _ message: @autoclosure () -> String) {
 }
 
 let arguments = CommandLine.arguments
-guard arguments.count == 5 else {
-    print("usage: GilnunTests <guidance_fixtures.json> <model.mlmodelc> <detector_golden.json> <repo root>")
+guard arguments.count == 7 else {
+    print("usage: GilnunTests <guidance_fixtures.json> <model.mlmodelc> <detector_golden.json> <repo root> <braille.mlmodelc> <braille_golden.json>")
     exit(2)
 }
 
@@ -28,10 +28,16 @@ runObstacleTests()
 runTextAimingTests()
 runDuplicateTextTests()
 runNumberSafetyTests()
+runBrailleTrackerTests()
 runGuidanceParityTests(fixturesURL: URL(fileURLWithPath: arguments[1]))
 runDetectorTests(
     modelURL: URL(fileURLWithPath: arguments[2]),
     goldenURL: URL(fileURLWithPath: arguments[3]),
+    repoRoot: URL(fileURLWithPath: arguments[4])
+)
+runBrailleSegmenterTests(
+    modelURL: URL(fileURLWithPath: arguments[5]),
+    goldenURL: URL(fileURLWithPath: arguments[6]),
     repoRoot: URL(fileURLWithPath: arguments[4])
 )
 
