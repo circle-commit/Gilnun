@@ -23,6 +23,7 @@ sourceSets {
                 "PocketDetector.kt",
                 "SceneAnalyzer.kt",
                 "SceneDetection.kt",
+                "Severity.kt",
                 "SpatialAudio.kt",
                 "TextReading.kt"
             )

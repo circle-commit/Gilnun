@@ -157,6 +157,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var guidanceAccent: View
     private lateinit var guidanceTag: TextView
     private lateinit var guidanceMsg: TextView
+    private lateinit var guidanceDetail: TextView
+    private lateinit var dangerEdge: DangerEdgeView
+    private var isDangerEdgeShown = false
     private lateinit var ocrCard: LinearLayout
     private lateinit var ocrStatusLbl: TextView
     private lateinit var ocrSpinner: ProgressBar
@@ -284,6 +287,8 @@ class MainActivity : ComponentActivity() {
         root.addView(previewView, matchParent())
         root.addView(makeVignette(), matchParent())
         root.addView(boxOverlay, matchParent())
+        dangerEdge = DangerEdgeView(this).apply { alpha = 0f; visibility = View.GONE }
+        root.addView(dangerEdge, matchParent())
         root.addView(makeGestureLayer(), matchParent())
 
         val overlay = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -462,15 +467,21 @@ class MainActivity : ComponentActivity() {
         tagRow.addView(guidanceTag)
         card.addView(tagRow)
 
+        // Like iOS: the first sentence large (larger still for 위험), the rest smaller below.
         guidanceMsg = TextView(this).apply {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             setTextColor(Color.WHITE)
-            setLineSpacing(dp(5).toFloat(), 1f)
-            maxLines = 3
-            // 28sp, shrinking to ~0.75× (≈21sp) to fit — mirrors iOS minimumScaleFactor(0.75).
-            setAutoSizeTextTypeUniformWithConfiguration(21, 28, 1, TypedValue.COMPLEX_UNIT_SP)
+            setLineSpacing(dp(4).toFloat(), 1f)
+            textSize = 28f
         }
-        card.addView(guidanceMsg, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(12) })
+        card.addView(guidanceMsg, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(10) })
+        guidanceDetail = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            textSize = 20f
+            visibility = View.GONE
+        }
+        card.addView(guidanceDetail, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
         return card
     }
 
@@ -598,17 +609,21 @@ class MainActivity : ComponentActivity() {
         boxOverlay.visibility = if (isOcr) View.GONE else View.VISIBLE
         if (isOcr) boxOverlay.clear() else boxOverlay.update(liveBoxes, liveImageW, liveImageH, liveBraille)
 
-        // Guidance card
-        val sev = severityColor()
-        guidanceTag.text = when {
-            latestLiveRiskScore >= 85 -> "위험"
-            latestLiveRiskScore >= 55 -> "주의"
-            else -> "안내"
-        }
-        guidanceTag.setTextColor(sev)
-        guidanceAccent.background = rounded(sev, 3)
-        guidanceMsg.text = latestGuide
-        guidanceCard.background = glass(C_GLASS, withAlpha(sev, 0.28f), 24)
+        // Guidance card: filled with the severity's color, as on iOS.
+        val severity = Severity.of(latestLiveRiskScore)
+        val (headline, detail) = GuidanceText.split(latestGuide)
+        guidanceTag.text = severity.label
+        guidanceTag.setTextColor(severity.ink)
+        guidanceAccent.background = rounded(severity.ink, 3)
+        guidanceMsg.text = headline
+        guidanceMsg.setTextColor(severity.ink)
+        guidanceMsg.textSize = if (severity == Severity.DANGER) 34f else 28f
+        guidanceDetail.text = detail.orEmpty()
+        guidanceDetail.setTextColor(severity.ink)
+        guidanceDetail.visibility = if (detail == null) View.GONE else View.VISIBLE
+        guidanceCard.background = glass(withAlpha(severity.cardFill, 0.9f), withAlpha(Color.WHITE, 0.15f), 28)
+        guidanceCard.contentDescription = "${severity.label}. $latestGuide"
+        showDangerEdge(!isOcr && severity == Severity.DANGER)
 
         // OCR panel
         ocrStatusLbl.text = liveOcrStatus.message
@@ -633,11 +648,26 @@ class MainActivity : ComponentActivity() {
         label.setTextColor(tint)
     }
 
-    private fun severityColor(): Int = when {
-        latestLiveRiskScore >= 85 -> C_DANGER
-        latestLiveRiskScore >= 55 -> C_WARNING
-        else -> C_PRIMARY
+    /** Fades the red edge glow in or out (instantly when the user turned animations off). */
+    private fun showDangerEdge(show: Boolean) {
+        if (show == isDangerEdgeShown) return
+        isDangerEdgeShown = show
+        val target = if (show) 1f else 0f
+        val animate = android.provider.Settings.Global.getFloat(
+            contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f
+        ) > 0f
+        dangerEdge.animate().cancel()
+        if (show) dangerEdge.visibility = View.VISIBLE
+        if (!animate) {
+            dangerEdge.alpha = target
+            if (!show) dangerEdge.visibility = View.GONE
+            return
+        }
+        dangerEdge.animate().alpha(target).setDuration(300).withEndAction {
+            if (!show) dangerEdge.visibility = View.GONE
+        }.start()
     }
+
 
     // ── Mode switching ────────────────────────────────────────
     private fun toggleMode() {
@@ -1221,7 +1251,6 @@ class MainActivity : ComponentActivity() {
         // Palette (mirrors iOS `P`).
         private val C_PRIMARY = 0xFF45B8FF.toInt()
         private val C_LIVE = 0xFF29DE8F.toInt()
-        private val C_WARNING = 0xFFFF941F.toInt()
         private val C_DANGER = 0xFFFF3B3B.toInt()
         private val C_GLASS = 0xB8172138.toInt()
         private val C_GLASS_STROKE = 0x1AFFFFFF
