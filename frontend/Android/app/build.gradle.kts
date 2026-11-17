@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -18,6 +20,19 @@ android {
     androidResources {
         // The detector model is read whole at startup; stored uncompressed it loads faster.
         noCompress += "onnx"
+    }
+
+    // Java and Kotlin must compile for the same JVM version, or the build stops with
+    // "Inconsistent JVM-target compatibility" (the defaults are 1.8 and the build JDK's).
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
