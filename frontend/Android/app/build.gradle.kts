@@ -15,6 +15,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // `-PabiFilters=arm64-v8a` packages only those native libraries; CI uses it to keep
+        // the test APK small. Without it every ABI is included, as before.
+        (project.findProperty("abiFilters") as String?)?.let { filters ->
+            ndk { abiFilters += filters.split(",") }
+        }
     }
 
     androidResources {

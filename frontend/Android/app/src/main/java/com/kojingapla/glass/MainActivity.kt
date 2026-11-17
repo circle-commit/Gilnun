@@ -965,7 +965,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // ── Text reading (on-device ML Kit OCR) ───────────────────
-    @OptIn(ExperimentalGetImage::class)
+    @androidx.annotation.OptIn(ExperimentalGetImage::class)
     private fun analyzeTextFrame(image: ImageProxy) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastTextAnalysisMs < TEXT_ANALYSIS_INTERVAL_MS) return
