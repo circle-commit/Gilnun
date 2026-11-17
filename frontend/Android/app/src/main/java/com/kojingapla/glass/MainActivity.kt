@@ -190,7 +190,7 @@ class MainActivity : ComponentActivity() {
         else ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_REQUEST)
     }
 
-    override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, results: IntArray) {
+    override fun onRequestPermissionsResult(req: Int, perms: Array<String>, results: IntArray) {
         super.onRequestPermissionsResult(req, perms, results)
         if (req != CAMERA_REQUEST) return
         if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
