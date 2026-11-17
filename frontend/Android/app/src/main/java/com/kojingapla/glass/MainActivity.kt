@@ -190,7 +190,7 @@ class MainActivity : ComponentActivity() {
         else ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_REQUEST)
     }
 
-    override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, results: IntArray) {
+    override fun onRequestPermissionsResult(req: Int, perms: Array<String>, results: IntArray) {
         super.onRequestPermissionsResult(req, perms, results)
         if (req != CAMERA_REQUEST) return
         if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
@@ -965,7 +965,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // ── Text reading (on-device ML Kit OCR) ───────────────────
-    @OptIn(ExperimentalGetImage::class)
+    @androidx.annotation.OptIn(ExperimentalGetImage::class)
     private fun analyzeTextFrame(image: ImageProxy) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastTextAnalysisMs < TEXT_ANALYSIS_INTERVAL_MS) return
