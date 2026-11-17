@@ -32,6 +32,8 @@ frontend/Android/tests/run_tests.sh
 
 Kotlin 안내 로직을 Python 백엔드와 비교하고(iOS 테스트와 같은 기준 데이터), ONNX 모델을 PyTorch 기준 탐지 결과와 비교하며, 문자 읽기·보행 신호·주머니 감지 규칙을 확인합니다.
 
+이 테스트와 디버그 APK 빌드는 PR마다 GitHub Actions(`.github/workflows/android.yml`)에서도 자동으로 실행됩니다. 빌드된 APK는 실행 결과 페이지의 Artifacts(`gilnun-android-debug-apk`)에서 내려받아 폰에 바로 설치할 수 있습니다(실행마다 서명 키가 달라서, 이전 빌드는 먼저 삭제해야 설치됩니다).
+
 ## 모델 업데이트
 
 모델을 다시 학습했다면 새 체크포인트를 변환하고 기준 탐지 결과를 갱신합니다.
